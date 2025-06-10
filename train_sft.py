@@ -18,6 +18,9 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 import logging
 
+# In case previous experiments didn't close properly
+torch.cuda.empty_cache()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -224,8 +227,8 @@ def main():
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_lora_qwen",
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
         gradient_accumulation_steps=1,
         num_train_epochs=3,
         max_steps=1000 if DEBUG else 100_000,
