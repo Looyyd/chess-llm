@@ -201,9 +201,9 @@ def main():
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_lora_qwen",
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        gradient_accumulation_steps=4,  # Effective batch size = 16
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        gradient_accumulation_steps=1,  # Effective batch size = 16
         num_train_epochs=3,
         max_steps=1000 if DEBUG else -1,  # Limit steps in debug mode
         learning_rate=2e-5,
@@ -221,6 +221,7 @@ def main():
         dataset_text_field="text",
         # Keep remove_unused_columns as default (True) since we already handled it in preprocessing
         report_to="none" if DEBUG else "wandb",
+        push_to_hub=not DEBUG,
     )
 
     # Initialize trainer
