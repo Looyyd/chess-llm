@@ -4,11 +4,13 @@
 import torch
 import random
 import chess
+import re
 from pathlib import Path
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
+    TrainerCallback,  # Add this import
 )
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -19,6 +21,55 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEBUG = True
+
+
+# Add this custom callback class
+class PeriodicInferenceCallback(TrainerCallback):
+    """Callback to run inference periodically during training"""
+
+    def __init__(self, tokenizer, test_prompt, inference_steps=500):
+        self.tokenizer = tokenizer
+        self.test_prompt = test_prompt
+        self.inference_steps = inference_steps
+
+    def on_step_end(self, args, state, control, **kwargs):
+        # Run inference every `inference_steps` steps
+        if state.global_step % self.inference_steps == 0 and state.global_step > 0:
+            model = kwargs["model"]
+
+            logger.info(f"\n{'='*50}")
+            logger.info(f"Running inference at step {state.global_step}")
+            logger.info(f"{'='*50}")
+
+            # Prepare the input
+            inputs = self.tokenizer(
+                self.test_prompt, return_tensors="pt", truncation=True, max_length=1024
+            ).to(model.device)
+
+            # Generate
+            model.eval()
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=50,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+
+            # Decode and print
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            logger.info(f"Model response:\n{response}")
+
+            # Extract the move from \boxed{} tags if present
+            match = re.search(r"\\boxed\{([^}]+)\}", response)
+            if match:
+                predicted_move = match.group(1)
+                logger.info(f"Predicted move: {predicted_move}")
+
+            logger.info(f"{'='*50}\n")
+
+            model.train()
 
 
 def board_to_grid(board):
@@ -201,8 +252,8 @@ def main():
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_lora_qwen",
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
         gradient_accumulation_steps=1,  # Effective batch size = 16
         num_train_epochs=3,
         max_steps=1000 if DEBUG else -1,  # Limit steps in debug mode
@@ -224,25 +275,7 @@ def main():
         push_to_hub=not DEBUG,
     )
 
-    # Initialize trainer
-    trainer = SFTTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        # eval_dataset=eval_dataset,  # Uncomment if you have eval data
-        processing_class=tokenizer,
-        # Don't pass peft_config here since model is already wrapped
-    )
-
-    # Fine-tune the model
-    logger.info("Starting training...")
-    trainer.train()
-
-    # Save the model
-    trainer.save_model()
-    logger.info("Training complete! Model saved.")
-
-    # Test inference
+    # Prepare the test prompt
     test_position = """Current game position:
 
 Player Elo: 1500
@@ -276,11 +309,40 @@ What is the most likely next move? Answer with the final answer only, inside an 
     ]
 
     # Format with chat template
-    prompt = tokenizer.apply_chat_template(
+    test_prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
+
+    # Create the inference callback
+    inference_callback = PeriodicInferenceCallback(
+        tokenizer=tokenizer,
+        test_prompt=test_prompt,
+        inference_steps=200,  # Run inference every 200 steps
+    )
+
+    # Initialize trainer with the callback
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        # eval_dataset=eval_dataset,  # Uncomment if you have eval data
+        processing_class=tokenizer,
+        callbacks=[inference_callback],  # Add the callback here
+        # Don't pass peft_config here since model is already wrapped
+    )
+
+    # Fine-tune the model
+    logger.info("Starting training...")
+    trainer.train()
+
+    # Save the model
+    trainer.save_model()
+    logger.info("Training complete! Model saved.")
+
+    # Final test inference
+    logger.info("\nFinal inference test:")
     inputs = tokenizer(
-        prompt, return_tensors="pt", truncation=True, max_length=1024
+        test_prompt, return_tensors="pt", truncation=True, max_length=1024
     ).to("cuda")
 
     with torch.no_grad():
@@ -296,8 +358,6 @@ What is the most likely next move? Answer with the final answer only, inside an 
     print(f"Model response:\n{response}")
 
     # Extract the move from \boxed{} tags if present
-    import re
-
     match = re.search(r"\\boxed\{([^}]+)\}", response)
     if match:
         predicted_move = match.group(1)
