@@ -6,3 +6,5 @@ peft
 bitsandbytes
 accelerate
 rich
+
+wandb
