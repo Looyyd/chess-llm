@@ -12,6 +12,7 @@ from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
 import logging
 from typing import List, Dict, Any
+import argparse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -294,6 +295,15 @@ def main():
     # Model configuration
     base_model_path = "./chess_lora_qwen"  # Path to your fine-tuned model
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Train a chess reinforcement learning model."
+    )
+    parser.add_argument(
+        "--vllm", action="store_true", help="Use vLLM for model generation."
+    )
+    args = parser.parse_args()
+
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
     tokenizer.pad_token = tokenizer.eos_token
@@ -362,6 +372,9 @@ def main():
         gradient_checkpointing=True,
         report_to="none" if DEBUG else "wandb",
         seed=42,
+        # VLLM
+        use_vllm=args.vllm,
+        vllm_mode="server",
     )
 
     # Initialize trainer
