@@ -266,7 +266,7 @@ def main():
         save_steps=500,
         save_strategy="steps",
         eval_strategy="no",  # Set to "steps" if you have eval dataset
-        bg16=True,
+        bf16=True,
         optim="adamw_torch",
         max_grad_norm=1.0,
         # SFT specific parameters
