@@ -191,9 +191,6 @@ def main():
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 
-    # Prepare model for 4-bit training
-    model = prepare_model_for_kbit_training(model)
-
     # Configure LoRA
     lora_config = LoraConfig(
         r=16,
