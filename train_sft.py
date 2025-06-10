@@ -183,18 +183,9 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    # Configure 4-bit quantization
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-    )
-
     # Load model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        quantization_config=quant_config,
         device_map="auto",
         torch_dtype=torch.bfloat16,
     )
