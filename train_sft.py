@@ -186,7 +186,6 @@ def main():
     # Load model
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map="auto",
         torch_dtype=torch.bfloat16,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
