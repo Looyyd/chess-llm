@@ -178,49 +178,18 @@ What is the most likely next move? Answer with the final answer only, inside an 
 
 def main():
     # Model configuration
-    model_name = "Qwen/Qwen2.5-7B-Instruct"
+    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    # Load model
-    # Add quantization config
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_quant_storage=torch.bfloat16,
-    )
-
     # Load model with quantization
     device_string = PartialState().process_index
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        quantization_config=bnb_config,
         torch_dtype=torch.bfloat16,
     )
-
-    # Now prepare_model_for_kbit_training will work without OOM
-    model = prepare_model_for_kbit_training(model)
-    model.config.pad_token_id = tokenizer.pad_token_id
-
-    # Configure LoRA
-    lora_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        target_modules=[
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-        ],  # Common attention modules
-        lora_dropout=0.1,
-        bias="none",
-        task_type="CAUSAL_LM",  # Causal language modeling
-    )
-    model = get_peft_model(model, lora_config)
 
     # Load dataset using load_dataset
     logger.info("Loading dataset...")
@@ -257,9 +226,9 @@ def main():
         output_dir="./chess_lora_qwen",
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        gradient_accumulation_steps=1,  # Effective batch size = 16
+        gradient_accumulation_steps=1,
         num_train_epochs=3,
-        max_steps=1000 if DEBUG else -1,  # Limit steps in debug mode
+        max_steps=1000 if DEBUG else 100_000,
         learning_rate=2e-5,
         warmup_steps=100,
         logging_steps=100,
