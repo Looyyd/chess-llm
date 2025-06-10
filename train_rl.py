@@ -92,6 +92,19 @@ def extract_move_from_completion(completion):
     return None
 
 
+def has_thinking_tags(completion: str) -> bool:
+    """Check if the completion contains <think> tags with content"""
+    # Check for opening and closing tags
+    think_pattern = r"<think>\s*(.+?)\s*</think>"
+    match = re.search(think_pattern, completion, re.DOTALL)
+
+    if match:
+        # Ensure there's actual content between the tags
+        content = match.group(1).strip()
+        return len(content) > 0
+    return False
+
+
 def chess_reward_function(prompts, completions, **kwargs):
     """
     Reward function based on Stockfish evaluation difference.
@@ -109,6 +122,10 @@ def chess_reward_function(prompts, completions, **kwargs):
                 rewards.append(0.0)
                 continue
 
+            base_reward = 0
+            if not has_thinking_tags(completion):
+                base_reward -= 5  # no thinking tags penalty
+
             # Extract the move from the completion
             move_str = extract_move_from_completion(completion)
             if move_str is None:
@@ -117,7 +134,7 @@ def chess_reward_function(prompts, completions, **kwargs):
                         f"Failed to extract move from completion: {completion[:100]}..."
                     )
                 rewards.append(
-                    -15.0
+                    base_reward - 15.0
                 )  # Penalty for invalid format(needs to be greated than the move rewards, to avoid reward hacking)
                 continue
 
@@ -127,7 +144,9 @@ def chess_reward_function(prompts, completions, **kwargs):
                 if move not in board.legal_moves:
                     if DEBUG:
                         logger.warning(f"Illegal move {move_str} in position")
-                    rewards.append(-12.0)  # Heavy penalty for illegal moves
+                    rewards.append(
+                        base_reward - 12.0
+                    )  # Heavy penalty for illegal moves
                     continue
 
                 # Evaluate position before move
@@ -150,12 +169,12 @@ def chess_reward_function(prompts, completions, **kwargs):
                 # To avoid reward hacking with invalid moves
                 reward = max(-10.0, min(10.0, reward))
 
-                rewards.append(float(reward))
+                rewards.append(base_reward + float(reward))
 
             except (ValueError, chess.InvalidMoveError) as e:
                 if DEBUG:
                     logger.warning(f"Invalid move format {move_str}: {e}")
-                rewards.append(-12.0)  # Penalty for invalid move format
+                rewards.append(base_reward - 12.0)  # Penalty for invalid move format
 
         except Exception as e:
             logger.error(f"Error in reward calculation: {e}")
@@ -320,7 +339,7 @@ def main():
         temperature=0.8,
         top_p=0.95,
         # GRPO specific parameters
-        beta=0.0,  # No KL penalty (following recent best practices)
+        beta=0.04,  # No KL penalty (following recent best practices)
         epsilon=0.2,  # Clipping parameter
         epsilon_high=0.28,
         reward_weights=None,  # Single reward function
@@ -333,7 +352,7 @@ def main():
         optim="adamw_8bit",
         max_grad_norm=1.0,
         # Logging and saving
-        logging_steps=10,
+        logging_steps=1,
         save_steps=100,
         save_strategy="steps",
         log_completions=True,
