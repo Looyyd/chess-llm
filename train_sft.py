@@ -1,0 +1,307 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import torch
+import random
+import chess
+from pathlib import Path
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+)
+from datasets import load_dataset
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from trl import SFTTrainer, SFTConfig
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+DEBUG = True
+
+
+def board_to_grid(board):
+    """Convert board to visual grid representation"""
+    grid_lines = []
+    grid_lines.append("  a b c d e f g h")
+    grid_lines.append("  ----------------")
+
+    for rank in range(7, -1, -1):  # 8 to 1
+        line = f"{rank + 1}|"
+        for file in range(8):  # a to h
+            square = chess.square(file, rank)
+            piece = board.piece_at(square)
+            if piece is None:
+                line += " ."
+            else:
+                symbol = piece.symbol()
+                # Use uppercase for white, lowercase for black
+                line += f" {symbol}"
+        line += f" |{rank + 1}"
+        grid_lines.append(line)
+
+    grid_lines.append("  ----------------")
+    grid_lines.append("  a b c d e f g h")
+
+    return "\n".join(grid_lines)
+
+
+def preprocess_chess_games(examples, tokenizer):
+    """Preprocess a batch of chess games into training examples"""
+    texts = []
+
+    for i in range(len(examples["moves"])):
+        moves = examples["moves"][i]
+        white_elo = examples["white_elo"][i]
+        black_elo = examples["black_elo"][i]
+        time_control = examples["time_control"][i]
+
+        # Skip if game is too short
+        if len(moves) < 2:
+            # Add empty text to maintain batch size
+            texts.append("")
+            continue
+
+        # Pick a random position from the game (not the last one)
+        position_idx = random.randint(0, len(moves) - 2)
+
+        # Reconstruct board up to that position
+        board = chess.Board()
+        move_history = []
+
+        for j in range(position_idx):
+            move = moves[j]
+            board.push_uci(move)
+            move_history.append(move)
+
+        # Get the next move (the answer)
+        next_move = moves[position_idx]
+
+        # Determine whose turn it is and their Elo
+        if board.turn == chess.WHITE:
+            current_elo = white_elo
+            turn = "White"
+        else:
+            current_elo = black_elo
+            turn = "Black"
+
+        # Format move history
+        move_history_str = " ".join(move_history) if move_history else "Game start"
+
+        # Create board visualization
+        board_grid = board_to_grid(board)
+
+        # Create the conversation
+        system_prompt = "You are a chess engine. Given a chess position, predict the most likely next move based on the player's Elo rating and game context."
+
+        user_prompt = f"""Current game position:
+
+Player Elo: {current_elo}
+Time Control: {time_control}
+Move history (UCI format): {move_history_str}
+Turn: {turn}
+
+Current board state:
+{board_grid}
+
+
+What is the most likely next move? Answer with the final answer only, inside an \\boxed{"{}"} box."""
+
+        assistant_response = f"\\boxed{{{next_move}}}"
+
+        # Format as messages
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": assistant_response},
+        ]
+
+        # Apply chat template
+        text = tokenizer.apply_chat_template(messages, tokenize=False)
+        texts.append(text)
+
+    return {"text": texts}
+
+
+def main():
+    # Model configuration
+    model_name = "Qwen/Qwen2.5-0.5B"  # Using a similar small model
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Configure 4-bit quantization
+    quant_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+    )
+
+    # Load model
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=quant_config,
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
+    )
+    model.config.pad_token_id = tokenizer.pad_token_id
+
+    # Prepare model for 4-bit training
+    model = prepare_model_for_kbit_training(model)
+
+    # Configure LoRA
+    lora_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+        ],  # Common attention modules
+        lora_dropout=0.1,
+        bias="none",
+        task_type="CAUSAL_LM",  # Causal language modeling
+    )
+    model = get_peft_model(model, lora_config)
+
+    # Load dataset using load_dataset
+    logger.info("Loading dataset...")
+    dataset = load_dataset(
+        "json",
+        data_files="./data/lichess_2013_12_compact.jsonl",
+        split="train",
+        streaming=True if not DEBUG else False,  # Use streaming for large datasets
+    )
+
+    if DEBUG:
+        # Take only first 1000 games for debugging
+        dataset = dataset.take(1000)
+
+    # Preprocess the dataset
+    logger.info("Preprocessing dataset...")
+
+    # Map preprocessing function with batching for efficiency
+    train_dataset = dataset.map(
+        lambda examples: preprocess_chess_games(examples, tokenizer),
+        batched=True,
+        batch_size=100,  # Process 100 games at a time
+        remove_columns=dataset.column_names,  # Remove original columns, keep only 'text'
+    )
+
+    # Filter out empty texts (from games that were too short)
+    train_dataset = train_dataset.filter(lambda example: len(example["text"]) > 0)
+
+    # TODO: Create eval dataset by splitting the data
+    # eval_dataset = dataset.skip(1000).take(200).map(...)
+
+    # Training arguments
+    training_args = SFTConfig(
+        output_dir="./chess_lora_qwen",
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
+        gradient_accumulation_steps=4,  # Effective batch size = 16
+        num_train_epochs=3,
+        max_steps=1000 if DEBUG else -1,  # Limit steps in debug mode
+        learning_rate=2e-5,
+        warmup_steps=100,
+        logging_steps=100,
+        save_steps=500,
+        save_strategy="steps",
+        eval_strategy="no",  # Set to "steps" if you have eval dataset
+        fp16=True,
+        optim="adamw_8bit",
+        max_grad_norm=1.0,
+        # SFT specific parameters
+        max_length=1024,
+        packing=False,  # Could enable for efficiency
+        dataset_text_field="text",
+        # Keep remove_unused_columns as default (True) since we already handled it in preprocessing
+        report_to="none" if DEBUG else "wandb",
+    )
+
+    # Initialize trainer
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        # eval_dataset=eval_dataset,  # Uncomment if you have eval data
+        processing_class=tokenizer,
+        # Don't pass peft_config here since model is already wrapped
+    )
+
+    # Fine-tune the model
+    logger.info("Starting training...")
+    trainer.train()
+
+    # Save the model
+    trainer.save_model()
+    logger.info("Training complete! Model saved.")
+
+    # Test inference
+    test_position = """Current game position:
+
+Player Elo: 1500
+Time Control: 600+0
+Move history (UCI format): e2e4 e7e5 g1f3 b8c6
+Turn: White
+
+Current board state:
+  a b c d e f g h
+  ----------------
+8| r . b q k b . r |8
+7| p p p p . p p p |7
+6| . . n . . . . . |6
+5| . . . . p . . . |5
+4| . . . . P . . . |4
+3| . . . . . N . . |3
+2| P P P P . P P P |2
+1| R N B Q K B . R |1
+  ----------------
+  a b c d e f g h
+
+
+What is the most likely next move? Answer with the final answer only, inside an \\boxed{} box."""
+
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a chess engine. Given a chess position, predict the most likely next move based on the player's Elo rating and game context.",
+        },
+        {"role": "user", "content": test_position},
+    ]
+
+    # Format with chat template
+    prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(
+        prompt, return_tensors="pt", truncation=True, max_length=1024
+    ).to("cuda")
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=50,
+            temperature=0.7,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    print(f"Model response:\n{response}")
+
+    # Extract the move from \boxed{} tags if present
+    import re
+
+    match = re.search(r"\\boxed\{([^}]+)\}", response)
+    if match:
+        predicted_move = match.group(1)
+        print(f"\nPredicted move: {predicted_move}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,2 +1,7 @@
 chess
 torch
+transformers
+trl
+peft
+bitsandbytes
+accelerate

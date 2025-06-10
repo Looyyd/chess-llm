@@ -1,1 +1,5 @@
 data/
+.venv/
+
+
+chess_lora_qwen/
