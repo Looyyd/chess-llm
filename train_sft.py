@@ -185,10 +185,25 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
 
     # Load model
+    # Add quantization config
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+    )
+
+    # Load model with quantization
     device_string = PartialState().process_index
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=torch.bfloat16, device_map={"": device_string}
+        model_name,
+        quantization_config=bnb_config,
+        torch_dtype=torch.bfloat16,
+        device_map={"": device_string},
     )
+
+    # Now prepare_model_for_kbit_training will work without OOM
+    model = prepare_model_for_kbit_training(model)
     model.config.pad_token_id = tokenizer.pad_token_id
 
     # Configure LoRA
