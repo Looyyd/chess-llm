@@ -12,6 +12,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainerCallback,  # Add this import
 )
+from accelerate import PartialState
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
@@ -184,9 +185,9 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
 
     # Load model
+    device_string = PartialState().process_index
     model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.bfloat16,
+        model_name, torch_dtype=torch.bfloat16, device_map={"": device_string}
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 
