@@ -224,8 +224,22 @@ def prepare_chess_dataset(examples, tokenizer):
         if len(moves) < 2:
             continue
 
-        # Pick a random position from the game (not the last one)
-        position_idx = random.randint(0, len(moves) - 2)
+        # Create weights that linearly increase from 1 to 5
+        # position_idx can be from 0 to len(moves)-2 (inclusive)
+        num_positions = len(moves) - 1
+
+        # Create weights: weight = 1 + 4 * (position / (num_positions - 1))
+        # This gives us 1 for position 0 and 5 for the last valid position
+        weights = []
+        for pos in range(num_positions):
+            if num_positions == 1:
+                weight = 1.0  # Only one position available
+            else:
+                weight = 1.0 + 4.0 * (pos / (num_positions - 1))
+            weights.append(weight)
+
+        # Use random.choices with weights to select position
+        position_idx = random.choices(range(num_positions), weights=weights, k=1)[0]
 
         # Reconstruct board up to that position
         board = chess.Board()
