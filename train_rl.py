@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DEBUG = True
-STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"  # Update this to your stockfish path
+#STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"
+STOCKFISH_PATH = r"/usr/games/stockfish"
+
 STOCKFISH_TIME_LIMIT = 0.1  # Time limit for stockfish analysis in seconds
 STOCKFISH_DEPTH = 15  # Depth for stockfish analysis
 

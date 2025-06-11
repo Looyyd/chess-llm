@@ -9,5 +9,6 @@ rich
 deepspeed
 fastapi
 uvicorn
+vllm
 
 wandb
