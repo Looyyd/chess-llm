@@ -395,7 +395,6 @@ def main():
         },
         # VLLM
         use_vllm=args.vllm,
-        vllm_mode="server",
     )
 
     # Initialize trainer
