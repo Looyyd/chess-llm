@@ -190,8 +190,7 @@ def main():
     # Load model with quantization
     device_string = PartialState().process_index
     model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.bfloat16,
+        model_name, torch_dtype=torch.bfloat16, device_map={"": device_string}
     )
 
     # Load dataset using load_dataset
