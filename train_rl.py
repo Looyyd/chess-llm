@@ -338,6 +338,8 @@ def main():
     if DEBUG:
         # Take only first 100 games for debugging
         dataset = dataset.take(100)
+    else:
+        dataset = dataset.take(100_000)
 
     # Preprocess the dataset
     logger.info("Preprocessing dataset...")
@@ -358,7 +360,7 @@ def main():
         per_device_train_batch_size=4,
         gradient_accumulation_steps=1,
         num_train_epochs=1,
-        max_steps=500 if DEBUG else -1,
+        max_steps=500 if DEBUG else 50_000,
         gradient_checkpointing=True,
         # Generation parameters
         num_generations=4,  # Number of completions to generate per prompt
