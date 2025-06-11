@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-DEBUG = True
+DEBUG = False
 # STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"
 STOCKFISH_PATH = r"/usr/games/stockfish"
 
@@ -357,13 +357,13 @@ def main():
     training_args = GRPOConfig(
         output_dir="./chess_grpo_qwen",
         # Training parameters
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=8,
         gradient_accumulation_steps=1,
         num_train_epochs=1,
         max_steps=500 if DEBUG else 50_000,
         gradient_checkpointing=True,
         # Generation parameters
-        num_generations=4,  # Number of completions to generate per prompt
+        num_generations=8,  # Number of completions to generate per prompt
         max_prompt_length=1024,
         max_completion_length=512,  # Longer to accommodate thinking
         temperature=0.8,
