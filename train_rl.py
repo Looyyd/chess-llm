@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DEBUG = True
-#STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"
+# STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"
 STOCKFISH_PATH = r"/usr/games/stockfish"
 
 STOCKFISH_TIME_LIMIT = 0.1  # Time limit for stockfish analysis in seconds
@@ -375,7 +375,7 @@ def main():
         # Optimization
         learning_rate=5e-6,
         warmup_steps=50,
-        optim="adamw_8bit",
+        optim="adamw_torch",
         max_grad_norm=1.0,
         # Logging and saving
         logging_steps=1,
