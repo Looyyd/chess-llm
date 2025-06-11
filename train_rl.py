@@ -383,7 +383,7 @@ def main():
         # Logging and saving
         logging_steps=1,
         save_steps=100,
-        save_total_limit=2,
+        save_total_limit=1,
         save_strategy="steps",
         push_to_hub=not DEBUG,
         log_completions=True,
