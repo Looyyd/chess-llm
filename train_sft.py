@@ -249,6 +249,7 @@ def main():
         warmup_steps=100,
         logging_steps=100,
         save_steps=500,
+        save_total_limit=2,
         save_strategy="steps",
         eval_strategy="no",  # Set to "steps" if you have eval dataset
         bf16=True,
