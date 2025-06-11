@@ -9,7 +9,7 @@ rich
 deepspeed
 fastapi
 uvicorn
-vllm
+vllm==0.8.1
 pydantic
 
 wandb
