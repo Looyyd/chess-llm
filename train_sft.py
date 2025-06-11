@@ -24,7 +24,7 @@ torch.cuda.empty_cache()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DEBUG = True
+DEBUG = False
 
 
 # Add this custom callback class
