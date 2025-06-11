@@ -331,7 +331,7 @@ def main():
         "json",
         data_files="./data/lichess_2013_12_compact.jsonl",
         split="train",
-        streaming=True,
+        streaming=False,
     )
 
     if DEBUG:
