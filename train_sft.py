@@ -256,22 +256,22 @@ def main():
     # Prepare the test prompt
     test_position = """Current game position:
 
-Player Elo: 1500
-Time Control: 600+0
-Move history (UCI format): e2e4 e7e5 g1f3 b8c6
+Player Elo: 1800
+Time Control: 180+0
+Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8 h2h3 c6a5 b3c2 c7c5 d2d4 d8c7 b1d2 c5d4 c3d4 a5c6
 Turn: White
 
 Current board state:
   a b c d e f g h
   ----------------
-8| r . b q k b . r |8
-7| p p p p . p p p |7
-6| . . n . . . . . |6
-5| . . . . p . . . |5
-4| . . . . P . . . |4
-3| . . . . . N . . |3
-2| P P P P . P P P |2
-1| R N B Q K B . R |1
+8| r . b . . r k . |8
+7| . . q . b p p p |7
+6| p . n p . n . . |6
+5| . p . . p . . . |5
+4| . . . P P . . . |4
+3| . . . . . N . P |3
+2| P P B N . P P . |2
+1| R . B Q R . K . |1
   ----------------
   a b c d e f g h
 
