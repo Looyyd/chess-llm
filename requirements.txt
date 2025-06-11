@@ -10,5 +10,6 @@ deepspeed
 fastapi
 uvicorn
 vllm
+pydantic
 
 wandb
