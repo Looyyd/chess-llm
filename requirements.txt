@@ -8,5 +8,6 @@ accelerate
 rich
 deepspeed
 fastapi
+uvicorn
 
 wandb
