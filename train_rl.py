@@ -359,6 +359,7 @@ def main():
         gradient_accumulation_steps=1,
         num_train_epochs=1,
         max_steps=500 if DEBUG else -1,
+        gradient_checkpointing=True,
         # Generation parameters
         num_generations=4,  # Number of completions to generate per prompt
         max_prompt_length=1024,
@@ -374,9 +375,8 @@ def main():
         loss_type="dr_grpo",  # Use Dr. GRPO to avoid length bias
         mask_truncated_completions=True,
         # Optimization
-        learning_rate=5e-6,
+        learning_rate=1e-6,
         warmup_steps=50,
-        optim="adamw_torch",
         max_grad_norm=1.0,
         # Logging and saving
         logging_steps=1,
@@ -385,7 +385,8 @@ def main():
         save_strategy="steps",
         push_to_hub=not DEBUG,
         log_completions=True,
-        num_completions_to_print=2,
+        log_on_each_node=False,
+        num_completions_to_print=1,
         # Other settings
         bf16=True,
         report_to="none" if DEBUG else "wandb",
@@ -398,15 +399,9 @@ def main():
         use_vllm=args.vllm,
     )
 
-    # Load model with quantization
-    device_string = PartialState().process_index
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model_path, torch_dtype=torch.bfloat16, device_map={"": device_string}
-    )
-
     # Initialize trainer
     trainer = GRPOTrainer(
-        model=model,
+        model=base_model_path,
         args=training_args,
         train_dataset=train_dataset,
         processing_class=tokenizer,
