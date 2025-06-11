@@ -240,8 +240,8 @@ def main():
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_lora_qwen",
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=8,
+        per_device_eval_batch_size=8,
         gradient_accumulation_steps=1,
         num_train_epochs=3,
         max_steps=1000 if DEBUG else 100_000,
