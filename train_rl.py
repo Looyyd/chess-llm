@@ -315,7 +315,7 @@ def main():
         "json",
         data_files="./data/lichess_2013_12_compact.jsonl",
         split="train",
-        streaming=True if not DEBUG else False,
+        streaming=True,
     )
 
     if DEBUG:
@@ -364,14 +364,19 @@ def main():
         # Logging and saving
         logging_steps=1,
         save_steps=100,
+        save_total_limit=2,
         save_strategy="steps",
+        push_to_hub=not DEBUG,
         log_completions=True,
         num_completions_to_print=2,
         # Other settings
         bf16=True,
-        gradient_checkpointing=True,
         report_to="none" if DEBUG else "wandb",
         seed=42,
+        accelerator_config={
+            # Otherwise the variable length sequences can cause issues on multi gpu
+            "dispatch_batches": False,
+        },
         # VLLM
         use_vllm=args.vllm,
         vllm_mode="server",
