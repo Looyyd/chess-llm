@@ -247,6 +247,10 @@ def main():
         # Keep remove_unused_columns as default (True) since we already handled it in preprocessing
         report_to="none" if DEBUG else "wandb",
         push_to_hub=not DEBUG,
+        accelerator_config={
+            # Otherwise the variable length sequences can cause issues on multi gpu
+            "dispatch_batches": False,
+        },
     )
 
     # Prepare the test prompt
