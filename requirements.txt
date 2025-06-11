@@ -6,5 +6,6 @@ peft
 bitsandbytes
 accelerate
 rich
+deepspeed
 
 wandb
