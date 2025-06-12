@@ -5,16 +5,13 @@ import torch
 import random
 import chess
 import re
-from pathlib import Path
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainerCallback,  # Add this import
+    TrainerCallback,
 )
 from accelerate import PartialState
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 import logging
 
@@ -102,7 +99,7 @@ def board_to_grid(board):
     return "\n".join(grid_lines)
 
 
-def preprocess_chess_games(examples, tokenizer):
+def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=300):
     """Preprocess a batch of chess games into training examples"""
     texts = []
 
@@ -113,8 +110,18 @@ def preprocess_chess_games(examples, tokenizer):
         time_control = examples["time_control"][i]
 
         # Skip if game is too short
-        if len(moves) < 2:
-            # Add empty text to maintain batch size
+        if len(moves) < 8:
+            texts.append("")
+            continue
+
+        # Filter by ELO
+        if white_elo < min_elo or black_elo < min_elo:
+            texts.append("")
+            continue
+
+        # Filter by time control (format like "300+0")
+        base_time = int(time_control.split("+")[0])
+        if base_time < min_time_control:
             texts.append("")
             continue
 
@@ -227,14 +234,13 @@ def main():
     train_dataset = dataset.map(
         lambda examples: preprocess_chess_games(examples, tokenizer),
         batched=True,
-        batch_size=100,  # Process 100 games at a time
+        batch_size=1000,
         remove_columns=dataset.column_names,  # Remove original columns, keep only 'text'
     )
 
     # Filter out empty texts (from games that were too short)
     train_dataset = train_dataset.filter(lambda example: len(example["text"]) > 0)
 
-    # TODO: Create eval dataset by splitting the data
     # eval_dataset = dataset.skip(1000).take(200).map(...)
 
     # Training arguments
@@ -242,7 +248,7 @@ def main():
         output_dir="./chess_lora_qwen",
         per_device_train_batch_size=8,
         per_device_eval_batch_size=8,
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=4,
         num_train_epochs=3,
         max_steps=1000 if DEBUG else 100_000,
         learning_rate=2e-5,
@@ -251,7 +257,7 @@ def main():
         save_steps=500,
         save_total_limit=2,
         save_strategy="steps",
-        eval_strategy="no",  # Set to "steps" if you have eval dataset
+        eval_strategy="no",
         bf16=True,
         optim="adamw_torch",
         max_grad_norm=1.0,
@@ -321,7 +327,6 @@ What is the most likely next move? Answer with the final answer only, inside an 
         # eval_dataset=eval_dataset,  # Uncomment if you have eval data
         processing_class=tokenizer,
         callbacks=[inference_callback],  # Add the callback here
-        # Don't pass peft_config here since model is already wrapped
     )
 
     # Fine-tune the model
