@@ -102,6 +102,25 @@ def board_to_grid(board):
     return "\n".join(grid_lines)
 
 
+def parse_time_control(time_control):
+    """Safely parse time control string"""
+    if not time_control or time_control == "-":
+        return None  # or 0, depending on how you want to handle it
+
+    if "+" in time_control:
+        try:
+            base_time = int(time_control.split("+")[0])
+            return base_time
+        except (ValueError, IndexError):
+            return None
+    else:
+        # Handle formats like "90" (just minutes)
+        try:
+            return int(time_control)
+        except ValueError:
+            return None
+
+
 def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=300):
     """Preprocess a batch of chess games into training examples"""
     texts = []
@@ -122,9 +141,10 @@ def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=3
             texts.append("")
             continue
 
-        # Filter by time control (format like "300+0")
-        base_time = int(time_control.split("+")[0])
-        if base_time < min_time_control:
+        base_time = parse_time_control(time_control)
+
+        # Skip games with no time control or very fast games
+        if base_time is None or base_time < 300:  # Less than 5 minutes
             texts.append("")
             continue
 
@@ -208,7 +228,7 @@ def main():
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_size="left")
     tokenizer.padding_side = "left"
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -253,14 +273,15 @@ def main():
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_lora_qwen",
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        gradient_accumulation_steps=1,
         num_train_epochs=3,
         max_steps=1000 if DEBUG else 100_000,
         learning_rate=2e-5,
         warmup_steps=100,
         logging_steps=100,
+        padding_free=True,  # this works with flash attention 2 and avoids padding errors, TODO: can now remove padding_left?
         save_steps=500,
         save_total_limit=2,
         save_strategy="steps",
@@ -268,6 +289,7 @@ def main():
         bf16=True,
         optim="adamw_torch",
         max_grad_norm=1.0,
+        ddp_find_unused_parameters=False,
         # SFT specific parameters
         max_length=1024,
         packing=False,  # Could enable for efficiency
