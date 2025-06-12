@@ -308,7 +308,7 @@ def main():
     test_position = """Current game position:
 
 Player Elo: 1800
-Time Control: 180+0
+Time Control: 300+0
 Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8 h2h3 c6a5 b3c2 c7c5 d2d4 d8c7 b1d2 c5d4 c3d4 a5c6
 Turn: White
 
