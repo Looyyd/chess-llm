@@ -11,6 +11,7 @@ fastapi
 uvicorn
 vllm==0.8.1
 pydantic
+hf_xet
 
 liger-kernel
 flash-attn
