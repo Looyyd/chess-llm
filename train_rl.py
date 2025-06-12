@@ -344,7 +344,7 @@ def main():
     train_dataset = dataset.map(
         lambda examples: prepare_chess_dataset(examples, tokenizer),
         batched=True,
-        batch_size=10,
+        batch_size=1000,
         remove_columns=dataset.column_names,
     )
 
@@ -355,7 +355,7 @@ def main():
     training_args = GRPOConfig(
         output_dir="./chess_grpo_qwen",
         # Training parameters
-        per_device_train_batch_size=8,
+        per_device_train_batch_size=16,
         gradient_accumulation_steps=1,
         num_train_epochs=1,
         max_steps=500 if DEBUG else 50_000,
