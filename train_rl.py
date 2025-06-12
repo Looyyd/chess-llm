@@ -404,11 +404,9 @@ def main():
     )
 
     # Load model with quantization
-    device_string = PartialState().process_index
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
         torch_dtype=torch.bfloat16,
-        device_map={"": device_string},
         attn_implementation="flash_attention_2",
     )
 
