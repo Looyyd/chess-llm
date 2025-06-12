@@ -44,7 +44,10 @@ class PeriodicInferenceCallback(TrainerCallback):
 
             # Prepare the input
             inputs = self.tokenizer(
-                self.test_prompt, return_tensors="pt", truncation=True, max_length=1024
+                self.test_prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=1024,
             ).to(model.device)
 
             # Generate
@@ -206,6 +209,7 @@ def main():
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.padding_side = "left"
     tokenizer.pad_token = tokenizer.eos_token
 
     # Load model with quantization
@@ -313,7 +317,7 @@ What is the most likely next move? Answer with the final answer only, inside an 
 
     # Format with chat template
     test_prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages, tokenize=False, add_generation_prompt=True, padding_side="left"
     )
 
     # Create the inference callback
@@ -344,7 +348,11 @@ What is the most likely next move? Answer with the final answer only, inside an 
     # Final test inference
     logger.info("\nFinal inference test:")
     inputs = tokenizer(
-        test_prompt, return_tensors="pt", truncation=True, max_length=1024
+        test_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=1024,
+        padding_side="left",
     ).to("cuda")
 
     with torch.no_grad():
