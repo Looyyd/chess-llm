@@ -388,6 +388,8 @@ def main():
         log_completions=True,
         log_on_each_node=False,
         num_completions_to_print=1,
+        sync_ref_model=True,  # Probably a good idea for long runs, recommended in https://github.com/willccbb/verifiers
+        ref_model_sync_steps=512,  # Default value
         # Other settings
         bf16=True,
         report_to="none" if DEBUG else "wandb",
