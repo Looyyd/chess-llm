@@ -211,7 +211,10 @@ def main():
     # Load model with quantization
     device_string = PartialState().process_index
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=torch.bfloat16, device_map={"": device_string}
+        model_name,
+        torch_dtype=torch.bfloat16,
+        device_map={"": device_string},
+        attn_implementation="flash_attention_2",
     )
 
     # Load dataset using load_dataset
@@ -273,7 +276,6 @@ def main():
             "dispatch_batches": False,
         },
         use_liger_kernel=True,
-        attn_implementation="flash_attention_2",
     )
 
     # Prepare the test prompt
