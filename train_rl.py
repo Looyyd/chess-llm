@@ -6,13 +6,10 @@ import random
 import chess
 import chess.engine
 import re
-from pathlib import Path
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from accelerate import PartialState
+from transformers import AutoTokenizer
 from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
 import logging
-from typing import List, Dict, Any
 import argparse
 
 logging.basicConfig(level=logging.INFO)
@@ -224,7 +221,8 @@ def prepare_chess_dataset(examples, tokenizer):
         moves = examples["moves"][i]
 
         # Skip if game is too short
-        if len(moves) < 2:
+        # NOTE: here we don't filter as aggressively as in train_sft, because having lower quality games is good, we want model to perform in variety of positions
+        if len(moves) < 8:
             continue
 
         # Create weights that linearly increase from 1 to 5
@@ -280,7 +278,7 @@ Example format:
 The position shows an open center with both sides castled kingside. White has a slight space advantage...
 The knight on f3 can jump to e5, attacking the weak f7 square...
 </think>
-\\boxed{e4e5}"""
+\\boxed{f3e5}"""
 
         user_prompt = f"""Current game position:
 
@@ -363,13 +361,13 @@ def main():
         max_steps=500 if DEBUG else 50_000,
         gradient_checkpointing=True,
         # Generation parameters
-        num_generations=8,  # Number of completions to generate per prompt
+        num_generations=8,
         max_prompt_length=1024,
         max_completion_length=512,  # Longer to accommodate thinking
         temperature=0.8,
         top_p=0.95,
         # GRPO specific parameters
-        beta=0.04,  # No KL penalty (following recent best practices)
+        beta=0.04,
         epsilon=0.2,  # Clipping parameter
         epsilon_high=0.28,
         reward_weights=None,  # Single reward function
@@ -399,6 +397,7 @@ def main():
         },
         # VLLM
         use_vllm=args.vllm,
+        use_liger_kernel=True,
     )
 
     # Initialize trainer
