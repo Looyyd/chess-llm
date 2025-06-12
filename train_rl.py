@@ -6,7 +6,8 @@ import random
 import chess
 import chess.engine
 import re
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from accelerate import PartialState
 from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
 import logging
@@ -400,9 +401,18 @@ def main():
         use_liger_kernel=True,
     )
 
+    # Load model with quantization
+    device_string = PartialState().process_index
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_path,
+        torch_dtype=torch.bfloat16,
+        device_map={"": device_string},
+        attn_implementation="flash_attention_2",
+    )
+
     # Initialize trainer
     trainer = GRPOTrainer(
-        model=base_model_path,
+        model=model,
         args=training_args,
         train_dataset=train_dataset,
         processing_class=tokenizer,
