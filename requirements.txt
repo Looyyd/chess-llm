@@ -12,4 +12,7 @@ uvicorn
 vllm==0.8.1
 pydantic
 
+liger-kernel
+flash-attn
+
 wandb

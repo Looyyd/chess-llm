@@ -272,6 +272,8 @@ def main():
             # Otherwise the variable length sequences can cause issues on multi gpu
             "dispatch_batches": False,
         },
+        use_liger_kernel=True,
+        attn_implementation="flash_attention_2",
     )
 
     # Prepare the test prompt
