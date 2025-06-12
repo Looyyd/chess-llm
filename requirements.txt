@@ -1,7 +1,6 @@
 chess
 torch
 transformers
-trl
 peft
 bitsandbytes
 accelerate
@@ -10,6 +9,7 @@ deepspeed
 fastapi
 uvicorn
 vllm==0.8.1
+trl[vllm]
 pydantic
 hf_xet
 
