@@ -273,8 +273,8 @@ def main():
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_lora_qwen",
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=8,
+        per_device_eval_batch_size=8,
         gradient_accumulation_steps=1,
         num_train_epochs=3,
         max_steps=1000 if DEBUG else 100_000,
@@ -282,9 +282,10 @@ def main():
         warmup_steps=100,
         logging_steps=100,
         padding_free=True,  # this works with flash attention 2 and avoids padding errors, TODO: can now remove padding_left?
-        save_steps=500,
-        save_total_limit=2,
-        save_strategy="steps",
+        # Disable local saving
+        save_strategy="no",  # No local checkpoints
+        save_steps=None,  # Not needed when save_strategy="no"
+        save_total_limit=0,  # No local checkpoints to keep
         eval_strategy="no",
         bf16=True,
         optim="adamw_torch",
@@ -297,6 +298,7 @@ def main():
         # Keep remove_unused_columns as default (True) since we already handled it in preprocessing
         report_to="none" if DEBUG else "wandb",
         push_to_hub=not DEBUG,
+        hub_strategy="every_save",  # Push to hub at regular intervals
         accelerator_config={
             # Otherwise the variable length sequences can cause issues on multi gpu
             "dispatch_batches": False,
