@@ -225,7 +225,7 @@ What is the most likely next move? Answer with the final answer only, inside an 
 
 def main():
     # Model configuration
-    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+    model_name = "Qwen/Qwen2.5-7B-Instruct"
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name, padding_size="left")
