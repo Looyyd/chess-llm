@@ -12,6 +12,8 @@ from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
 import logging
 import argparse
+from utils.chess_utils import board_to_grid, extract_move_from_completion, has_thinking_tags, parse_board_from_prompt
+from utils.dataset_utils import load_lichess_dataset, select_weighted_position, reconstruct_board_position
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,30 +35,6 @@ except Exception as e:
     raise
 
 
-def board_to_grid(board):
-    """Convert board to visual grid representation"""
-    grid_lines = []
-    grid_lines.append("  a b c d e f g h")
-    grid_lines.append("  ----------------")
-
-    for rank in range(7, -1, -1):  # 8 to 1
-        line = f"{rank + 1}|"
-        for file in range(8):  # a to h
-            square = chess.square(file, rank)
-            piece = board.piece_at(square)
-            if piece is None:
-                line += " ."
-            else:
-                symbol = piece.symbol()
-                # Use uppercase for white, lowercase for black
-                line += f" {symbol}"
-        line += f" |{rank + 1}"
-        grid_lines.append(line)
-
-    grid_lines.append("  ----------------")
-    grid_lines.append("  a b c d e f g h")
-
-    return "\n".join(grid_lines)
 
 
 def evaluate_position(board):
@@ -84,27 +62,8 @@ def evaluate_position(board):
         return 0
 
 
-def extract_move_from_completion(completion):
-    """Extract move from the completion with thinking format"""
-    # Look for move in \boxed{} format
-    match = re.search(r"\\boxed\{([^}]+)\}", completion)
-    if match:
-        move_str = match.group(1).strip()
-        return move_str
-    return None
 
 
-def has_thinking_tags(completion: str) -> bool:
-    """Check if the completion contains <think> tags with content"""
-    # Check for opening and closing tags
-    think_pattern = r"<think>\s*(.+?)\s*</think>"
-    match = re.search(think_pattern, completion, re.DOTALL)
-
-    if match:
-        # Ensure there's actual content between the tags
-        content = match.group(1).strip()
-        return len(content) > 0
-    return False
 
 
 def chess_reward_function(prompts, completions, **kwargs):
@@ -185,33 +144,6 @@ def chess_reward_function(prompts, completions, **kwargs):
     return rewards
 
 
-def parse_board_from_prompt(prompt):
-    """Parse chess board from the prompt text"""
-    try:
-        # Extract move history
-        move_history_match = re.search(r"Move history \(UCI format\): ([^\n]+)", prompt)
-        if move_history_match:
-            move_history_str = move_history_match.group(1).strip()
-
-            # Create a new board and apply moves
-            board = chess.Board()
-
-            if move_history_str != "Game start":
-                moves = move_history_str.split()
-                for move_str in moves:
-                    try:
-                        move = chess.Move.from_uci(move_str)
-                        board.push(move)
-                    except:
-                        logger.warning(f"Failed to parse move: {move_str}")
-                        return None
-
-            return board
-
-        return None
-    except Exception as e:
-        logger.error(f"Error parsing board from prompt: {e}")
-        return None
 
 
 def prepare_chess_dataset(examples, tokenizer):
@@ -226,37 +158,14 @@ def prepare_chess_dataset(examples, tokenizer):
         if len(moves) < 8:
             continue
 
-        # Create weights that linearly increase from 1 to 5
-        # position_idx can be from 0 to len(moves)-2 (inclusive)
-        num_positions = len(moves) - 1
-
-        # Create weights: weight = 1 + 4 * (position / (num_positions - 1))
-        # This gives us 1 for position 0 and 5 for the last valid position
-        weights = []
-        for pos in range(num_positions):
-            if num_positions == 1:
-                weight = 1.0  # Only one position available
-            else:
-                weight = 1.0 + 4.0 * (pos / (num_positions - 1))
-            weights.append(weight)
-
-        # Use random.choices with weights to select position
-        position_idx = random.choices(range(num_positions), weights=weights, k=1)[0]
-
-        # Reconstruct board up to that position
-        board = chess.Board()
-        move_history = []
-
-        for j in range(position_idx):
-            move = moves[j]
-            board.push_uci(move)
-            move_history.append(move)
-
+        # Select weighted position
+        position_idx = select_weighted_position(moves)
+        
+        # Reconstruct board position
+        board, move_history, move_history_str = reconstruct_board_position(moves, position_idx)
+        
         # Determine whose turn it is
         turn = "White" if board.turn == chess.WHITE else "Black"
-
-        # Format move history
-        move_history_str = " ".join(move_history) if move_history else "Game start"
 
         # Create board visualization
         board_grid = board_to_grid(board)
@@ -327,18 +236,13 @@ def main():
 
     # Load dataset
     logger.info("Loading dataset...")
-    dataset = load_dataset(
-        "json",
-        data_files="./data/lichess_2013_12_compact.jsonl",
+    take_count = 100 if DEBUG else 100_000
+    dataset = load_lichess_dataset(
+        "./data/lichess_2013_12_compact.jsonl",
         split="train",
         streaming=False,
+        take=take_count
     )
-
-    if DEBUG:
-        # Take only first 100 games for debugging
-        dataset = dataset.take(100)
-    else:
-        dataset = dataset.take(100_000)
 
     # Preprocess the dataset
     logger.info("Preprocessing dataset...")

@@ -14,6 +14,8 @@ from accelerate import PartialState
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
+from utils.chess_utils import board_to_grid, extract_move_from_completion, parse_time_control
+from utils.dataset_utils import load_lichess_dataset, select_weighted_position, reconstruct_board_position, get_turn_and_elo
 
 # In case previous experiments didn't close properly
 torch.cuda.empty_cache()
@@ -66,9 +68,8 @@ class PeriodicInferenceCallback(TrainerCallback):
             logger.info(f"Model response:\n{response}")
 
             # Extract the move from \boxed{} tags if present
-            match = re.search(r"\\boxed\{([^}]+)\}", response)
-            if match:
-                predicted_move = match.group(1)
+            predicted_move = extract_move_from_completion(response)
+            if predicted_move:
                 logger.info(f"Predicted move: {predicted_move}")
 
             logger.info(f"{'='*50}\n")
@@ -76,49 +77,8 @@ class PeriodicInferenceCallback(TrainerCallback):
             model.train()
 
 
-def board_to_grid(board):
-    """Convert board to visual grid representation"""
-    grid_lines = []
-    grid_lines.append("  a b c d e f g h")
-    grid_lines.append("  ----------------")
-
-    for rank in range(7, -1, -1):  # 8 to 1
-        line = f"{rank + 1}|"
-        for file in range(8):  # a to h
-            square = chess.square(file, rank)
-            piece = board.piece_at(square)
-            if piece is None:
-                line += " ."
-            else:
-                symbol = piece.symbol()
-                # Use uppercase for white, lowercase for black
-                line += f" {symbol}"
-        line += f" |{rank + 1}"
-        grid_lines.append(line)
-
-    grid_lines.append("  ----------------")
-    grid_lines.append("  a b c d e f g h")
-
-    return "\n".join(grid_lines)
 
 
-def parse_time_control(time_control):
-    """Safely parse time control string"""
-    if not time_control or time_control == "-":
-        return None  # or 0, depending on how you want to handle it
-
-    if "+" in time_control:
-        try:
-            base_time = int(time_control.split("+")[0])
-            return base_time
-        except (ValueError, IndexError):
-            return None
-    else:
-        # Handle formats like "90" (just minutes)
-        try:
-            return int(time_control)
-        except ValueError:
-            return None
 
 
 def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=300):
@@ -148,45 +108,17 @@ def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=3
             texts.append("")
             continue
 
-        # Create weights that linearly increase from 1 to 5
-        # position_idx can be from 0 to len(moves)-2 (inclusive)
-        num_positions = len(moves) - 1
-
-        # Create weights: weight = 1 + 4 * (position / (num_positions - 1))
-        # This gives us 1 for position 0 and 5 for the last valid position
-        weights = []
-        for pos in range(num_positions):
-            if num_positions == 1:
-                weight = 1.0  # Only one position available
-            else:
-                weight = 1.0 + 4.0 * (pos / (num_positions - 1))
-            weights.append(weight)
-
-        # Use random.choices with weights to select position
-        position_idx = random.choices(range(num_positions), weights=weights, k=1)[0]
-
-        # Reconstruct board up to that position
-        board = chess.Board()
-        move_history = []
-
-        for j in range(position_idx):
-            move = moves[j]
-            board.push_uci(move)
-            move_history.append(move)
-
+        # Select weighted position
+        position_idx = select_weighted_position(moves)
+        
+        # Reconstruct board position
+        board, move_history, move_history_str = reconstruct_board_position(moves, position_idx)
+        
         # Get the next move (the answer)
         next_move = moves[position_idx]
-
+        
         # Determine whose turn it is and their Elo
-        if board.turn == chess.WHITE:
-            current_elo = white_elo
-            turn = "White"
-        else:
-            current_elo = black_elo
-            turn = "Black"
-
-        # Format move history
-        move_history_str = " ".join(move_history) if move_history else "Game start"
+        turn, current_elo = get_turn_and_elo(board, white_elo, black_elo)
 
         # Create board visualization
         board_grid = board_to_grid(board)
@@ -243,16 +175,13 @@ def main():
 
     # Load dataset using load_dataset
     logger.info("Loading dataset...")
-    dataset = load_dataset(
-        "json",
-        data_files="./data/lichess_2013_12_compact.jsonl",
+    take_count = 1000 if DEBUG else None
+    dataset = load_lichess_dataset(
+        "./data/lichess_2013_12_compact.jsonl",
         split="train",
-        streaming=True,  # Use streaming for large datasets
+        streaming=True,
+        take=take_count
     )
-
-    if DEBUG:
-        # Take only first 1000 games for debugging
-        dataset = dataset.take(1000)
 
     # Preprocess the dataset
     logger.info("Preprocessing dataset...")
@@ -392,9 +321,8 @@ What is the most likely next move? Answer with the final answer only, inside an 
     print(f"Model response:\n{response}")
 
     # Extract the move from \boxed{} tags if present
-    match = re.search(r"\\boxed\{([^}]+)\}", response)
-    if match:
-        predicted_move = match.group(1)
+    predicted_move = extract_move_from_completion(response)
+    if predicted_move:
         print(f"\nPredicted move: {predicted_move}")
 
 

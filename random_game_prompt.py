@@ -3,33 +3,10 @@
 
 import random
 import chess
-from datasets import load_dataset
+from utils.chess_utils import board_to_grid
+from utils.dataset_utils import load_lichess_dataset, select_weighted_position, reconstruct_board_position
 
 
-def board_to_grid(board):
-    """Convert board to visual grid representation"""
-    grid_lines = []
-    grid_lines.append("  a b c d e f g h")
-    grid_lines.append("  ----------------")
-
-    for rank in range(7, -1, -1):  # 8 to 1
-        line = f"{rank + 1}|"
-        for file in range(8):  # a to h
-            square = chess.square(file, rank)
-            piece = board.piece_at(square)
-            if piece is None:
-                line += " ."
-            else:
-                symbol = piece.symbol()
-                # Use uppercase for white, lowercase for black
-                line += f" {symbol}"
-        line += f" |{rank + 1}"
-        grid_lines.append(line)
-
-    grid_lines.append("  ----------------")
-    grid_lines.append("  a b c d e f g h")
-
-    return "\n".join(grid_lines)
 
 
 def show_random_game_position():
@@ -37,11 +14,10 @@ def show_random_game_position():
 
     # Load dataset
     print("Loading dataset...")
-    dataset = load_dataset(
-        "json",
-        data_files="./data/lichess_2013_12_compact.jsonl",
+    dataset = load_lichess_dataset(
+        "./data/lichess_2013_12_compact.jsonl",
         split="train",
-        streaming=True,
+        streaming=True
     )
 
     # Select a random game
@@ -61,36 +37,15 @@ def show_random_game_position():
     print(f"Full game moves: {' '.join(moves)}")
 
     # Select a random position from the game (weighted towards later positions)
-    num_positions = len(moves) - 1
-
-    # Create weights that linearly increase from 1 to 5
-    weights = []
-    for pos in range(num_positions):
-        if num_positions == 1:
-            weight = 1.0
-        else:
-            weight = 1.0 + 4.0 * (pos / (num_positions - 1))
-        weights.append(weight)
-
-    # Select position using weights
-    position_idx = random.choices(range(num_positions), weights=weights, k=1)[0]
-
+    position_idx = select_weighted_position(moves)
+    
     print(f"\nSelected position after move {position_idx}")
-
-    # Reconstruct board up to that position
-    board = chess.Board()
-    move_history = []
-
-    for j in range(position_idx):
-        move = moves[j]
-        board.push_uci(move)
-        move_history.append(move)
-
+    
+    # Reconstruct board position
+    board, move_history, move_history_str = reconstruct_board_position(moves, position_idx)
+    
     # Determine whose turn it is
     turn = "White" if board.turn == chess.WHITE else "Black"
-
-    # Format move history
-    move_history_str = " ".join(move_history) if move_history else "Game start"
 
     # Create board visualization
     board_grid = board_to_grid(board)
