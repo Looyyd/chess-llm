@@ -12,6 +12,7 @@ vllm==0.8.1
 trl[vllm]
 pydantic
 hf_xet
+datasets
 
 liger-kernel
 flash-attn

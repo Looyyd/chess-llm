@@ -20,7 +20,6 @@ from utils.chess_utils import (
     parse_time_control,
 )
 from utils.dataset_utils import (
-    load_lichess_dataset,
     select_weighted_position,
     reconstruct_board_position,
     get_turn_and_elo,
@@ -186,15 +185,19 @@ def main():
         attn_implementation="flash_attention_2",
     )
 
-    # Load dataset using load_dataset
-    logger.info("Loading dataset...")
+    # Load dataset from Hugging Face
+    logger.info("Loading dataset from Hugging Face...")
     take_count = 1000 if DEBUG else None
-    dataset = load_lichess_dataset(
-        "./data/lichess_2013_12_compact.jsonl",
+    
+    # Load from Hugging Face Hub
+    dataset = load_dataset(
+        "Looyyd/chess-dataset",
         split="train",
         streaming=True,
-        take=take_count,
     )
+    
+    if take_count is not None:
+        dataset = dataset.take(take_count)
 
     # Preprocess the dataset
     logger.info("Preprocessing dataset...")
