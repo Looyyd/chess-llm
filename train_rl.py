@@ -6,6 +6,7 @@ import random
 import chess
 import chess.engine
 import re
+import os
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from accelerate import PartialState
 from datasets import load_dataset
@@ -41,6 +42,57 @@ except Exception as e:
     logger.error(f"Failed to initialize Stockfish: {e}")
     logger.error("Please install Stockfish and update STOCKFISH_PATH in the script")
     raise
+
+
+def load_checklist(phase):
+    """Load checklist markdown file for a specific game phase"""
+    checklist_path = os.path.join(
+        os.path.dirname(__file__), "checklists", f"{phase}.md"
+    )
+    try:
+        with open(checklist_path, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.warning(f"Checklist file not found: {checklist_path}")
+        return ""
+
+
+# Cache all checklists at module level to avoid repeated file I/O
+ALL_CHECKLISTS = f"""
+{load_checklist("opening")}
+
+---
+
+{load_checklist("midgame")}
+
+---
+
+{load_checklist("endgame")}
+"""
+
+# Create the prompt with thinking format instruction
+system_prompt = f"""You are a chess engine. Given a chess position, analyze the position and determine the best move.
+
+First, analyze the position inside <think> tags, using the following checklists to guide your thinking:
+
+{ALL_CHECKLISTS}
+
+Choose the most appropriate checklist(s) based on the game phase and work through them systematically as you analyze the position. Then provide your chosen move in UCI format inside \\boxed{{}} tags.
+
+Example format:
+<think>
+The position appears to be in the [opening/middlegame/endgame] phase. Following the relevant checklist:
+
+1. Safety & Basic Tactics:
+- My king is safe on g1, not in check
+- No pieces are hanging
+- No immediate captures available...
+
+2. [Continue through the relevant checklist sections...]
+
+Based on this analysis, the best move is...
+</think>
+\\boxed{{f3e5}}"""
 
 
 def evaluate_position(board):
@@ -172,26 +224,6 @@ def prepare_chess_dataset(examples, tokenizer):
         # Create board visualization
         board_grid = board_to_grid(board)
 
-        # Create the prompt with thinking format instruction
-        system_prompt = """You are a chess engine. Given a chess position, analyze the position and determine the best move.
-
-First, analyze the position inside <think> tags, considering:
-- Material balance
-- Piece activity and coordination
-- King safety
-- Pawn structure
-- Tactical opportunities
-- Strategic plans
-
-Then provide your chosen move in UCI format inside \\boxed{} tags.
-
-Example format:
-<think>
-The position shows an open center with both sides castled kingside. White has a slight space advantage...
-The knight on f3 can jump to e5, attacking the weak f7 square...
-</think>
-\\boxed{f3e5}"""
-
         user_prompt = f"""Current game position:
 
 Move history (UCI format): {move_history_str}
@@ -239,15 +271,15 @@ def main():
     # Load dataset from Hugging Face
     logger.info("Loading dataset from Hugging Face...")
     take_count = 100 if DEBUG else 100_000
-    
+
     # Load from Hugging Face Hub
     dataset = load_dataset(
         "Looyyd/chess-dataset",
         data_files={"train": "train.jsonl"},
         split="train",
-        streaming=False, # streaming not compatible with GRPOTrainer just yet
+        streaming=False,  # streaming not compatible with GRPOTrainer just yet
     )
-    
+
     if take_count is not None:
         dataset = dataset.take(take_count)
 
@@ -361,7 +393,7 @@ Current board state:
 What is the best move? Analyze the position and provide your answer."""
 
     messages = [
-        {"role": "system", "content": training_args.system_prompt},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": test_position},
     ]
 
