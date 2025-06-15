@@ -19,7 +19,6 @@ from utils.chess_utils import (
     parse_board_from_prompt,
 )
 from utils.dataset_utils import (
-    load_lichess_dataset,
     select_weighted_position,
     reconstruct_board_position,
 )
@@ -237,15 +236,20 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"  # Required for GRPO
 
-    # Load dataset
-    logger.info("Loading dataset...")
+    # Load dataset from Hugging Face
+    logger.info("Loading dataset from Hugging Face...")
     take_count = 100 if DEBUG else 100_000
-    dataset = load_lichess_dataset(
-        "./data/lichess_2013_12_compact.jsonl",
+    
+    # Load from Hugging Face Hub
+    dataset = load_dataset(
+        "Looyyd/chess-dataset",
+        data_files={"train": "train.jsonl"},
         split="train",
-        streaming=False,
-        take=take_count,
+        streaming=False, # streaming not compatible with GRPOTrainer just yet
     )
+    
+    if take_count is not None:
+        dataset = dataset.take(take_count)
 
     # Preprocess the dataset
     logger.info("Preprocessing dataset...")
