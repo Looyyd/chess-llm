@@ -214,7 +214,7 @@ def main():
 
     # Training arguments
     training_args = SFTConfig(
-        output_dir="./chess_lora_qwen",
+        output_dir="./chess_sft_qwen",
         per_device_train_batch_size=8,
         per_device_eval_batch_size=8,
         gradient_accumulation_steps=1,

@@ -12,8 +12,17 @@ from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
 import logging
 import argparse
-from utils.chess_utils import board_to_grid, extract_move_from_completion, has_thinking_tags, parse_board_from_prompt
-from utils.dataset_utils import load_lichess_dataset, select_weighted_position, reconstruct_board_position
+from utils.chess_utils import (
+    board_to_grid,
+    extract_move_from_completion,
+    has_thinking_tags,
+    parse_board_from_prompt,
+)
+from utils.dataset_utils import (
+    load_lichess_dataset,
+    select_weighted_position,
+    reconstruct_board_position,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,8 +42,6 @@ except Exception as e:
     logger.error(f"Failed to initialize Stockfish: {e}")
     logger.error("Please install Stockfish and update STOCKFISH_PATH in the script")
     raise
-
-
 
 
 def evaluate_position(board):
@@ -60,10 +67,6 @@ def evaluate_position(board):
     except Exception as e:
         logger.error(f"Error evaluating position: {e}")
         return 0
-
-
-
-
 
 
 def chess_reward_function(prompts, completions, **kwargs):
@@ -144,8 +147,6 @@ def chess_reward_function(prompts, completions, **kwargs):
     return rewards
 
 
-
-
 def prepare_chess_dataset(examples, tokenizer):
     """Prepare chess games for GRPO training"""
     prompts = []
@@ -160,10 +161,12 @@ def prepare_chess_dataset(examples, tokenizer):
 
         # Select weighted position
         position_idx = select_weighted_position(moves)
-        
+
         # Reconstruct board position
-        board, move_history, move_history_str = reconstruct_board_position(moves, position_idx)
-        
+        board, move_history, move_history_str = reconstruct_board_position(
+            moves, position_idx
+        )
+
         # Determine whose turn it is
         turn = "White" if board.turn == chess.WHITE else "Black"
 
@@ -218,7 +221,7 @@ What is the best move? Analyze the position and provide your answer."""
 
 def main():
     # Model configuration
-    base_model_path = "./chess_lora_qwen"  # Path to your fine-tuned model
+    base_model_path = "./chess_sft_qwen"  # Path to your fine-tuned model
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
@@ -241,7 +244,7 @@ def main():
         "./data/lichess_2013_12_compact.jsonl",
         split="train",
         streaming=False,
-        take=take_count
+        take=take_count,
     )
 
     # Preprocess the dataset
