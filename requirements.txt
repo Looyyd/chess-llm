@@ -13,6 +13,7 @@ trl[vllm]
 pydantic
 hf_xet
 datasets
+pyarrow
 
 liger-kernel
 flash-attn

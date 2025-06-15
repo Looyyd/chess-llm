@@ -192,6 +192,7 @@ def main():
     # Load from Hugging Face Hub
     dataset = load_dataset(
         "Looyyd/chess-dataset",
+        data_files={"train": "train.jsonl"},
         split="train",
         streaming=True,
     )
