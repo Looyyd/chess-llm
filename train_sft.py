@@ -14,8 +14,17 @@ from accelerate import PartialState
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
-from utils.chess_utils import board_to_grid, extract_move_from_completion, parse_time_control
-from utils.dataset_utils import load_lichess_dataset, select_weighted_position, reconstruct_board_position, get_turn_and_elo
+from utils.chess_utils import (
+    board_to_grid,
+    extract_move_from_completion,
+    parse_time_control,
+)
+from utils.dataset_utils import (
+    load_lichess_dataset,
+    select_weighted_position,
+    reconstruct_board_position,
+    get_turn_and_elo,
+)
 
 # In case previous experiments didn't close properly
 torch.cuda.empty_cache()
@@ -77,10 +86,6 @@ class PeriodicInferenceCallback(TrainerCallback):
             model.train()
 
 
-
-
-
-
 def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=300):
     """Preprocess a batch of chess games into training examples"""
     texts = []
@@ -90,6 +95,10 @@ def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=3
         white_elo = examples["white_elo"][i]
         black_elo = examples["black_elo"][i]
         time_control = examples["time_control"][i]
+        # Opening data is useful to include, if at some point we add other data to SFT on, it might use the opening terminology
+        # Also might help understand openings better?
+        opening = examples.get("opening", ["Unknown"] * len(examples["moves"]))[i]
+        eco = examples.get("eco", [""] * len(examples["moves"]))[i]
 
         # Skip if game is too short
         if len(moves) < 8:
@@ -110,13 +119,15 @@ def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=3
 
         # Select weighted position
         position_idx = select_weighted_position(moves)
-        
+
         # Reconstruct board position
-        board, move_history, move_history_str = reconstruct_board_position(moves, position_idx)
-        
+        board, move_history, move_history_str = reconstruct_board_position(
+            moves, position_idx
+        )
+
         # Get the next move (the answer)
         next_move = moves[position_idx]
-        
+
         # Determine whose turn it is and their Elo
         turn, current_elo = get_turn_and_elo(board, white_elo, black_elo)
 
@@ -130,6 +141,8 @@ def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=3
 
 Player Elo: {current_elo}
 Time Control: {time_control}
+Opening: {opening}
+ECO: {eco if eco else "N/A"}
 Move history (UCI format): {move_history_str}
 Turn: {turn}
 
@@ -180,7 +193,7 @@ def main():
         "./data/lichess_2013_12_compact.jsonl",
         split="train",
         streaming=True,
-        take=take_count
+        take=take_count,
     )
 
     # Preprocess the dataset
@@ -240,6 +253,8 @@ def main():
 
 Player Elo: 1800
 Time Control: 300+0
+Opening: Ruy Lopez: Morphy Defense, Caro Variation
+ECO: C70
 Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8 h2h3 c6a5 b3c2 c7c5 d2d4 d8c7 b1d2 c5d4 c3d4 a5c6
 Turn: White
 

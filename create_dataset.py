@@ -33,6 +33,8 @@ def convert_pgn_to_jsonl(input_pgn_path, output_jsonl_path, games_per_chunk=1000
                     "white_elo": int(game.headers.get("WhiteElo", 0)),
                     "black_elo": int(game.headers.get("BlackElo", 0)),
                     "time_control": game.headers.get("TimeControl", "0"),
+                    "opening": game.headers.get("Opening", "Unknown"),
+                    "eco": game.headers.get("ECO", ""),
                     "moves": [
                         move.uci() for move in moves
                     ],  # UCI format is more compact
@@ -67,6 +69,6 @@ def convert_pgn_to_jsonl(input_pgn_path, output_jsonl_path, games_per_chunk=1000
 
 if __name__ == "__main__":
     convert_pgn_to_jsonl(
-        "./data/lichess_db_standard_rated_2013-12.pgn",
-        "./data/lichess_2013_12_compact.jsonl",
+        "./data/lichess_db_standard_rated_2014-01.pgn",
+        "./data/lichess_2014_01_compact.jsonl",
     )
