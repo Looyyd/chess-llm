@@ -188,14 +188,14 @@ def main():
     # Load dataset from Hugging Face
     logger.info("Loading dataset from Hugging Face...")
     take_count = 1000 if DEBUG else None
-    
+
     # Load from Hugging Face Hub
     dataset = load_dataset(
         "Looyyd/chess-dataset",
         split="train",
         streaming=True,
     )
-    
+
     if take_count is not None:
         dataset = dataset.take(take_count)
 
@@ -228,9 +228,9 @@ def main():
         logging_steps=100,
         padding_free=True,  # this works with flash attention 2 and avoids padding errors, TODO: can now remove padding_left?
         # Disable local saving
-        save_strategy="no",  # No local checkpoints
-        save_steps=None,  # Not needed when save_strategy="no"
-        save_total_limit=0,  # No local checkpoints to keep
+        save_steps=500,
+        save_total_limit=1,
+        save_strategy="steps",
         eval_strategy="no",
         bf16=True,
         optim="adamw_torch",
@@ -243,7 +243,7 @@ def main():
         # Keep remove_unused_columns as default (True) since we already handled it in preprocessing
         report_to="none" if DEBUG else "wandb",
         push_to_hub=not DEBUG,
-        hub_strategy="every_save",  # Push to hub at regular intervals
+        hub_strategy="checkpoint",  # Saves at every save  with la latest checkpoint is also pushed in a subfolder allowing to resume training easily
         accelerator_config={
             # Otherwise the variable length sequences can cause issues on multi gpu
             "dispatch_batches": False,
