@@ -244,7 +244,7 @@ def main():
         # Keep remove_unused_columns as default (True) since we already handled it in preprocessing
         report_to="none" if DEBUG else "wandb",
         push_to_hub=not DEBUG,
-        hub_strategy="checkpoint",  # Saves at every save  with la latest checkpoint is also pushed in a subfolder allowing to resume training easily
+        hub_strategy="end",  # Saves at every save  with la latest checkpoint is also pushed in a subfolder allowing to resume training easily
         accelerator_config={
             # Otherwise the variable length sequences can cause issues on multi gpu
             "dispatch_batches": False,
