@@ -16,6 +16,6 @@ datasets
 pyarrow
 
 liger-kernel
-flash_attn==2.6.3
+flash_attn
 
 wandb
