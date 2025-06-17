@@ -100,26 +100,26 @@ class FormatComplianceMetricsCallback(TrainerCallback):
 
     def on_evaluate(self, args, state, control, **kwargs):
         model = kwargs["model"]
-        
+
         logger.info(f"\n{'='*50}")
         logger.info("Computing format compliance metrics on evaluation set")
         logger.info(f"{'='*50}")
-        
+
         has_thinking_count = 0
         has_move_count = 0
         total_samples = min(10, len(self.eval_prompts))  # Evaluate on up to 10 samples
-        
+
         model.eval()
         for i in range(total_samples):
             test_prompt = self.eval_prompts[i % len(self.eval_prompts)]
-            
+
             inputs = self.tokenizer(
                 test_prompt,
                 return_tensors="pt",
                 truncation=True,
                 max_length=1024,
             ).to(model.device)
-            
+
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
@@ -128,44 +128,50 @@ class FormatComplianceMetricsCallback(TrainerCallback):
                     do_sample=True,
                     pad_token_id=self.tokenizer.eos_token_id,
                 )
-            
+
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             if "<|im_start|>assistant" in response:
                 assistant_part = response.split("<|im_start|>assistant")[-1].strip()
             else:
                 assistant_part = response
-            
+
             # Check format compliance
             has_think = has_thinking_tags(assistant_part)
             predicted_move = extract_move_from_completion(assistant_part)
-            
+
             if has_think:
                 has_thinking_count += 1
             if predicted_move:
                 has_move_count += 1
-        
+
         thinking_rate = has_thinking_count / total_samples
         move_rate = has_move_count / total_samples
-        
+
         logger.info(f"Format Compliance Metrics:")
-        logger.info(f"  Thinking tags rate: {thinking_rate:.2%} ({has_thinking_count}/{total_samples})")
-        logger.info(f"  Valid move rate: {move_rate:.2%} ({has_move_count}/{total_samples})")
+        logger.info(
+            f"  Thinking tags rate: {thinking_rate:.2%} ({has_thinking_count}/{total_samples})"
+        )
+        logger.info(
+            f"  Valid move rate: {move_rate:.2%} ({has_move_count}/{total_samples})"
+        )
         logger.info(f"{'='*50}\n")
-        
+
         # Store for tracking
-        self.format_compliance_scores.append({
-            'step': state.global_step,
-            'thinking_rate': thinking_rate,
-            'move_rate': move_rate
-        })
-        
+        self.format_compliance_scores.append(
+            {
+                "step": state.global_step,
+                "thinking_rate": thinking_rate,
+                "move_rate": move_rate,
+            }
+        )
+
         model.train()
-        
+
         # Add metrics to the evaluation results
-        if 'metrics' in kwargs:
-            kwargs['metrics']['eval_thinking_rate'] = thinking_rate
-            kwargs['metrics']['eval_move_rate'] = move_rate
-        
+        if "metrics" in kwargs:
+            kwargs["metrics"]["eval_thinking_rate"] = thinking_rate
+            kwargs["metrics"]["eval_move_rate"] = move_rate
+
         return control
 
 
@@ -187,7 +193,7 @@ def main():
     global tokenizer  # Make tokenizer global for the prepare function
 
     # Model configuration - using the model from the first SFT stage
-    model_name = "./chess_sft_qwen"  # Output from train_sft.py
+    model_name = "./chess_sft_qwen_hf/checkpoint-5000/"  # Output from train_sft.py
 
     # Parse arguments
     import argparse
@@ -264,14 +270,12 @@ def main():
     # Split the dataset into train and eval
     logger.info(f"Splitting dataset with eval ratio: {args.eval_split_ratio}")
     split_dataset = dataset.train_test_split(
-        test_size=args.eval_split_ratio,
-        seed=42,  # For reproducibility
-        shuffle=True
+        test_size=args.eval_split_ratio, seed=42, shuffle=True  # For reproducibility
     )
-    
+
     train_dataset = split_dataset["train"]
     eval_dataset = split_dataset["test"]
-    
+
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Eval dataset size: {len(eval_dataset)}")
 
@@ -372,7 +376,6 @@ Current board state:
   a b c d e f g h
 
 What is the best move? Analyze the position and provide your answer.""",
-        
         """Current game position:
 
 Move history (UCI format): d2d4 g8f6 c2c4 e7e6 g1f3 d7d5
@@ -454,12 +457,12 @@ What is the best move? Analyze the position and provide your answer.""",
         test_prompts=test_prompts,
         inference_steps=100,  # Check more frequently
     )
-    
+
     format_metrics_callback = FormatComplianceMetricsCallback(
         tokenizer=tokenizer,
         eval_prompts=eval_prompts,
     )
-    
+
     # Early stopping callback
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=args.early_stopping_patience,
@@ -476,7 +479,7 @@ What is the best move? Analyze the position and provide your answer.""",
         callbacks=[
             format_validation_callback,
             format_metrics_callback,
-            early_stopping_callback
+            early_stopping_callback,
         ],
     )
 
@@ -521,12 +524,17 @@ What is the best move? Analyze the position and provide your answer.""",
     print(f"\nFormat check:")
     print(f"Has thinking tags: {has_think}")
     print(f"Extracted move: {predicted_move}")
-    
+
     # Print final format compliance scores
-    if hasattr(format_metrics_callback, 'format_compliance_scores') and format_metrics_callback.format_compliance_scores:
+    if (
+        hasattr(format_metrics_callback, "format_compliance_scores")
+        and format_metrics_callback.format_compliance_scores
+    ):
         print("\nFormat compliance throughout training:")
         for score in format_metrics_callback.format_compliance_scores:
-            print(f"Step {score['step']}: Thinking rate={score['thinking_rate']:.2%}, Move rate={score['move_rate']:.2%}")
+            print(
+                f"Step {score['step']}: Thinking rate={score['thinking_rate']:.2%}, Move rate={score['move_rate']:.2%}"
+            )
 
 
 if __name__ == "__main__":

@@ -106,7 +106,7 @@ def main():
     global tokenizer  # Make tokenizer global for the prepare function
 
     # Model configuration - using the model from the first SFT stage
-    model_name = "./chess_sft_qwen"  # Output from train_sft.py
+    model_name = "./chess_sft_qwen_hf/checkpoint-5000/"  # Output from train_sft.py
 
     # Parse arguments
     import argparse
