@@ -252,7 +252,7 @@ What is the best move? Analyze the position and provide your answer."""
 
 def main():
     # Model configuration
-    base_model_path = "./chess_sft_qwen"  # Path to your fine-tuned model
+    base_model_path = "Looyyd/chess-sft-qwen/checkpoint-5000"  # Use uploaded model from Hugging Face
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
