@@ -252,7 +252,9 @@ What is the best move? Analyze the position and provide your answer."""
 
 def main():
     # Model configuration
-    base_model_path = "Looyyd/chess-sft-qwen/checkpoint-5000"  # Use uploaded model from Hugging Face
+    base_model_path = (
+        "./chess_sft_qwen_hf/checkpoint-5000/"  # Need to first download the model
+    )
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
@@ -270,7 +272,7 @@ def main():
 
     # Load dataset from Hugging Face
     logger.info("Loading dataset from Hugging Face...")
-    take_count = 100 if DEBUG else 100_000
+    take_count = 100 if DEBUG else 50_000
 
     # Load from Hugging Face Hub
     dataset = load_dataset(
@@ -288,7 +290,7 @@ def main():
     train_dataset = dataset.map(
         lambda examples: prepare_chess_dataset(examples, tokenizer),
         batched=True,
-        batch_size=1000,
+        batch_size=10_000,
         remove_columns=dataset.column_names,
     )
 
@@ -350,7 +352,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
         torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
+        # attn_implementation="flash_attention_2",
     )
 
     # Initialize trainer
