@@ -301,7 +301,7 @@ def main():
     training_args = GRPOConfig(
         output_dir="./chess_grpo_qwen",
         # Training parameters
-        per_device_train_batch_size=16,
+        per_device_train_batch_size=8,
         gradient_accumulation_steps=1,
         num_train_epochs=1,
         max_steps=500 if DEBUG else 50_000,
