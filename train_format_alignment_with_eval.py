@@ -416,7 +416,7 @@ What is the best move? Analyze the position and provide your answer.""",
     # Training arguments with evaluation
     training_args = SFTConfig(
         output_dir=args.output_dir,
-        per_device_train_batch_size=4,  # Smaller batch size for format training
+        per_device_train_batch_size=8,  # Smaller batch size for format training
         per_device_eval_batch_size=4,
         gradient_accumulation_steps=2,
         num_train_epochs=1,  # Usually one epoch is enough for format alignment
