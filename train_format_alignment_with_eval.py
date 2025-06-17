@@ -424,7 +424,7 @@ What is the best move? Analyze the position and provide your answer.""",
         learning_rate=5e-6,  # Lower learning rate to preserve capabilities
         warmup_steps=50,
         logging_steps=50,
-        save_steps=250,
+        save_steps=args.eval_steps,
         save_total_limit=2,
         save_strategy="steps",
         eval_strategy="steps",  # Enable evaluation
