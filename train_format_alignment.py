@@ -263,7 +263,6 @@ def main():
         split="train",
     )
 
-
     # If dataset is large, optionally limit it
     if DEBUG:
         dataset = dataset.select(range(min(100, len(dataset))))
@@ -437,6 +436,8 @@ What is the best move? Analyze the position and provide your answer.""",
         optim="adamw_torch",
         max_grad_norm=1.0,
         ddp_find_unused_parameters=False,
+        # Completion only, to train on what we really care about
+        completion_only_loss=True,
         # SFT specific parameters
         max_length=1024,
         packing=False,
