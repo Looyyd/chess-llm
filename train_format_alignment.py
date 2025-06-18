@@ -219,14 +219,14 @@ def main():
     parser.add_argument(
         "--eval-split-ratio",
         type=float,
-        default=0.1,
-        help="Ratio of data to use for evaluation (default: 0.1)",
+        default=0.05,
+        help="Ratio of data to use for evaluation (default: 0.05)",
     )
     parser.add_argument(
         "--eval-steps",
         type=int,
-        default=100,
-        help="Run evaluation every N steps (default: 100)",
+        default=20,
+        help="Run evaluation every N steps (default: 20)",
     )
     parser.add_argument(
         "--early-stopping-patience",
@@ -499,13 +499,13 @@ What is the best move? Analyze the position and provide your answer.""",
         test_prompts[0],
         return_tensors="pt",
         truncation=True,
-        max_length=1024,
+        max_length=2048,
     ).to("cuda")
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=512,
+            max_new_tokens=1024,
             temperature=0.7,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id,
