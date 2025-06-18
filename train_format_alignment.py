@@ -175,19 +175,6 @@ class FormatComplianceMetricsCallback(TrainerCallback):
         return control
 
 
-def prepare_format_dataset(examples):
-    """Prepare the format alignment dataset"""
-    # The dataset should already be in the correct format with messages
-    # We just need to extract the text field
-    texts = []
-
-    for messages in examples["messages"]:
-        # Apply chat template to the messages
-        text = tokenizer.apply_chat_template(messages, tokenize=False)
-        texts.append(text)
-
-    return {"text": texts}
-
 
 def main():
     global tokenizer  # Make tokenizer global for the prepare function
@@ -278,30 +265,6 @@ def main():
 
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Eval dataset size: {len(eval_dataset)}")
-
-    # Preprocess the datasets
-    logger.info("Preprocessing train dataset...")
-    train_dataset = train_dataset.map(
-        prepare_format_dataset,
-        batched=True,
-        batch_size=100,
-        remove_columns=train_dataset.column_names,
-    )
-
-    logger.info("Preprocessing eval dataset...")
-    eval_dataset = eval_dataset.map(
-        prepare_format_dataset,
-        batched=True,
-        batch_size=100,
-        remove_columns=eval_dataset.column_names,
-    )
-
-    # Filter out empty texts
-    train_dataset = train_dataset.filter(lambda example: len(example["text"]) > 0)
-    eval_dataset = eval_dataset.filter(lambda example: len(example["text"]) > 0)
-
-    logger.info(f"Train dataset size after filtering: {len(train_dataset)}")
-    logger.info(f"Eval dataset size after filtering: {len(eval_dataset)}")
 
     # Prepare test prompts for validation callback
     test_prompts = []
