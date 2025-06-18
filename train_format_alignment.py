@@ -7,12 +7,14 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainerCallback,
+    EarlyStoppingCallback,
 )
 from accelerate import PartialState
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
 from utils.chess_utils import extract_move_from_completion, has_thinking_tags
+import numpy as np
 
 # In case previous experiments didn't close properly
 torch.cuda.empty_cache()
@@ -88,6 +90,91 @@ class FormatValidationCallback(TrainerCallback):
             model.train()
 
 
+class FormatComplianceMetricsCallback(TrainerCallback):
+    """Callback to compute format compliance metrics during evaluation"""
+
+    def __init__(self, tokenizer, eval_prompts):
+        self.tokenizer = tokenizer
+        self.eval_prompts = eval_prompts
+        self.format_compliance_scores = []
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        model = kwargs["model"]
+
+        logger.info(f"\n{'='*50}")
+        logger.info("Computing format compliance metrics on evaluation set")
+        logger.info(f"{'='*50}")
+
+        has_thinking_count = 0
+        has_move_count = 0
+        total_samples = min(10, len(self.eval_prompts))  # Evaluate on up to 10 samples
+
+        model.eval()
+        for i in range(total_samples):
+            test_prompt = self.eval_prompts[i % len(self.eval_prompts)]
+
+            inputs = self.tokenizer(
+                test_prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=1024,
+            ).to(model.device)
+
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            if "<|im_start|>assistant" in response:
+                assistant_part = response.split("<|im_start|>assistant")[-1].strip()
+            else:
+                assistant_part = response
+
+            # Check format compliance
+            has_think = has_thinking_tags(assistant_part)
+            predicted_move = extract_move_from_completion(assistant_part)
+
+            if has_think:
+                has_thinking_count += 1
+            if predicted_move:
+                has_move_count += 1
+
+        thinking_rate = has_thinking_count / total_samples
+        move_rate = has_move_count / total_samples
+
+        logger.info(f"Format Compliance Metrics:")
+        logger.info(
+            f"  Thinking tags rate: {thinking_rate:.2%} ({has_thinking_count}/{total_samples})"
+        )
+        logger.info(
+            f"  Valid move rate: {move_rate:.2%} ({has_move_count}/{total_samples})"
+        )
+        logger.info(f"{'='*50}\n")
+
+        # Store for tracking
+        self.format_compliance_scores.append(
+            {
+                "step": state.global_step,
+                "thinking_rate": thinking_rate,
+                "move_rate": move_rate,
+            }
+        )
+
+        model.train()
+
+        # Add metrics to the evaluation results
+        if "metrics" in kwargs:
+            kwargs["metrics"]["eval_thinking_rate"] = thinking_rate
+            kwargs["metrics"]["eval_move_rate"] = move_rate
+
+        return control
+
+
 def prepare_format_dataset(examples):
     """Prepare the format alignment dataset"""
     # The dataset should already be in the correct format with messages
@@ -129,6 +216,30 @@ def main():
         default="./chess_format_aligned",
         help="Output directory for the model",
     )
+    parser.add_argument(
+        "--eval-split-ratio",
+        type=float,
+        default=0.1,
+        help="Ratio of data to use for evaluation (default: 0.1)",
+    )
+    parser.add_argument(
+        "--eval-steps",
+        type=int,
+        default=100,
+        help="Run evaluation every N steps (default: 100)",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Number of evaluation steps with no improvement before early stopping (default: 3)",
+    )
+    parser.add_argument(
+        "--early-stopping-threshold",
+        type=float,
+        default=0.001,
+        help="Minimum change in loss to qualify as improvement (default: 0.001)",
+    )
     args = parser.parse_args()
 
     # Load tokenizer
@@ -152,26 +263,50 @@ def main():
         split="train",
     )
 
+
     # If dataset is large, optionally limit it
     if DEBUG:
         dataset = dataset.select(range(min(100, len(dataset))))
 
-    # Preprocess the dataset
-    logger.info("Preprocessing dataset...")
-    train_dataset = dataset.map(
+    # Split the dataset into train and eval
+    logger.info(f"Splitting dataset with eval ratio: {args.eval_split_ratio}")
+    split_dataset = dataset.train_test_split(
+        test_size=args.eval_split_ratio, seed=42, shuffle=True  # For reproducibility
+    )
+
+    train_dataset = split_dataset["train"]
+    eval_dataset = split_dataset["test"]
+
+    logger.info(f"Train dataset size: {len(train_dataset)}")
+    logger.info(f"Eval dataset size: {len(eval_dataset)}")
+
+    # Preprocess the datasets
+    logger.info("Preprocessing train dataset...")
+    train_dataset = train_dataset.map(
         prepare_format_dataset,
         batched=True,
         batch_size=100,
-        remove_columns=dataset.column_names,
+        remove_columns=train_dataset.column_names,
+    )
+
+    logger.info("Preprocessing eval dataset...")
+    eval_dataset = eval_dataset.map(
+        prepare_format_dataset,
+        batched=True,
+        batch_size=100,
+        remove_columns=eval_dataset.column_names,
     )
 
     # Filter out empty texts
     train_dataset = train_dataset.filter(lambda example: len(example["text"]) > 0)
+    eval_dataset = eval_dataset.filter(lambda example: len(example["text"]) > 0)
 
-    logger.info(f"Dataset size after filtering: {len(train_dataset)}")
+    logger.info(f"Train dataset size after filtering: {len(train_dataset)}")
+    logger.info(f"Eval dataset size after filtering: {len(eval_dataset)}")
 
     # Prepare test prompts for validation callback
     test_prompts = []
+    eval_prompts = []
 
     # Load checklist for test prompt
     def load_checklist(phase):
@@ -220,8 +355,9 @@ Based on this analysis, the best move is...
 </think>
 \\boxed{{f3e5}}"""
 
-    # Create a few test positions
-    test_position = """Current game position:
+    # Create test positions for validation and evaluation
+    test_positions = [
+        """Current game position:
 
 Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1c4 g8f6
 Turn: White
@@ -240,34 +376,63 @@ Current board state:
   ----------------
   a b c d e f g h
 
-What is the best move? Analyze the position and provide your answer."""
+What is the best move? Analyze the position and provide your answer.""",
+        """Current game position:
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": test_position},
+Move history (UCI format): d2d4 g8f6 c2c4 e7e6 g1f3 d7d5
+Turn: White
+
+Current board state:
+  a b c d e f g h
+  ----------------
+8| r n b q k b . r |8
+7| p p p . . p p p |7
+6| . . . . p n . . |6
+5| . . . p . . . . |5
+4| . . P P . . . . |4
+3| . . . . . N . . |3
+2| P P . . P P P P |2
+1| R N B Q K B . R |1
+  ----------------
+  a b c d e f g h
+
+What is the best move? Analyze the position and provide your answer.""",
     ]
 
-    # Apply chat template and add <think> prefix
-    test_prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    test_prompt += "<think>"
-    test_prompts.append(test_prompt)
+    # Create prompts for both validation and evaluation
+    for test_position in test_positions:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": test_position},
+        ]
 
-    # Training arguments
+        # Apply chat template and add <think> prefix
+        test_prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        test_prompt += "<think>"
+        test_prompts.append(test_prompt)
+        eval_prompts.append(test_prompt)
+
+    # Training arguments with evaluation
     training_args = SFTConfig(
         output_dir=args.output_dir,
-        per_device_train_batch_size=4,  # Smaller batch size for format training
-        gradient_accumulation_steps=2,
+        per_device_train_batch_size=16,  # Smaller batch size for format training
+        per_device_eval_batch_size=16,
+        gradient_accumulation_steps=1,
         num_train_epochs=1,  # Usually one epoch is enough for format alignment
         max_steps=args.max_steps,
         learning_rate=5e-6,  # Lower learning rate to preserve capabilities
         warmup_steps=50,
-        logging_steps=50,
-        save_steps=250,
+        logging_steps=10,
+        save_steps=args.eval_steps,
         save_total_limit=2,
         save_strategy="steps",
-        eval_strategy="no",
+        eval_strategy="steps",  # Enable evaluation
+        eval_steps=args.eval_steps,  # Evaluate every N steps
+        metric_for_best_model="eval_loss",  # Use eval loss for model selection
+        greater_is_better=False,  # Lower loss is better
+        load_best_model_at_end=True,  # Load best model when training ends
         bf16=True,
         optim="adamw_torch",
         max_grad_norm=1.0,
@@ -287,24 +452,40 @@ What is the best move? Analyze the position and provide your answer."""
         gradient_checkpointing=True,
     )
 
-    # Create the validation callback
-    format_callback = FormatValidationCallback(
+    # Create callbacks
+    format_validation_callback = FormatValidationCallback(
         tokenizer=tokenizer,
         test_prompts=test_prompts,
         inference_steps=100,  # Check more frequently
     )
 
-    # Initialize trainer
+    format_metrics_callback = FormatComplianceMetricsCallback(
+        tokenizer=tokenizer,
+        eval_prompts=eval_prompts,
+    )
+
+    # Early stopping callback
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_threshold=args.early_stopping_threshold,
+    )
+
+    # Initialize trainer with evaluation dataset
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
+        eval_dataset=eval_dataset,  # Add evaluation dataset
         processing_class=tokenizer,
-        callbacks=[format_callback],
+        callbacks=[
+            format_validation_callback,
+            format_metrics_callback,
+            early_stopping_callback,
+        ],
     )
 
     # Fine-tune the model
-    logger.info("Starting format alignment training...")
+    logger.info("Starting format alignment training with evaluation...")
     trainer.train()
 
     # Save the model
@@ -344,6 +525,17 @@ What is the best move? Analyze the position and provide your answer."""
     print(f"\nFormat check:")
     print(f"Has thinking tags: {has_think}")
     print(f"Extracted move: {predicted_move}")
+
+    # Print final format compliance scores
+    if (
+        hasattr(format_metrics_callback, "format_compliance_scores")
+        and format_metrics_callback.format_compliance_scores
+    ):
+        print("\nFormat compliance throughout training:")
+        for score in format_metrics_callback.format_compliance_scores:
+            print(
+                f"Step {score['step']}: Thinking rate={score['thinking_rate']:.2%}, Move rate={score['move_rate']:.2%}"
+            )
 
 
 if __name__ == "__main__":
