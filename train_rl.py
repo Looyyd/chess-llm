@@ -372,58 +372,6 @@ def main():
     trainer.save_model()
     logger.info("Training complete! Model saved.")
 
-    # Test the trained model
-    test_position = """Current game position:
-
-Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1c4 g8f6
-Turn: White
-
-Current board state:
-  a b c d e f g h
-  ----------------
-8| r . b q k b . r |8
-7| p p p p . p p p |7
-6| . . n . . n . . |6
-5| . . . . p . . . |5
-4| . . B . P . . . |4
-3| . . . . . N . . |3
-2| P P P P . P P P |2
-1| R N B Q K . . R |1
-  ----------------
-  a b c d e f g h
-
-What is the best move? Analyze the position and provide your answer."""
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": test_position},
-    ]
-
-    prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-
-    inputs = tokenizer(
-        prompt, return_tensors="pt", truncation=True, max_length=1024
-    ).to("cuda")
-
-    with torch.no_grad():
-        outputs = trainer.model.generate(
-            **inputs,
-            max_new_tokens=512,
-            temperature=0.7,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    print(f"Model response:\n{response}")
-
-    # Extract and display the move
-    move = extract_move_from_completion(response)
-    if move:
-        print(f"\nPredicted move: {move}")
-
 
 def cleanup():
     """Clean up resources"""

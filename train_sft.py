@@ -317,33 +317,6 @@ What is the most likely next move? Answer with the final answer only, inside an 
     trainer.save_model()
     logger.info("Training complete! Model saved.")
 
-    # Final test inference
-    logger.info("\nFinal inference test:")
-    inputs = tokenizer(
-        test_prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=1024,
-        padding_side="left",
-    ).to("cuda")
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=50,
-            temperature=0.7,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    print(f"Model response:\n{response}")
-
-    # Extract the move from \boxed{} tags if present
-    predicted_move = extract_move_from_completion(response)
-    if predicted_move:
-        print(f"\nPredicted move: {predicted_move}")
-
 
 if __name__ == "__main__":
     main()
