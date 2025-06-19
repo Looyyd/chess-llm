@@ -14,6 +14,7 @@ from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
 from utils.chess_utils import extract_move_from_completion, has_thinking_tags
+from utils.prompt_utils import get_chess_system_prompt
 import numpy as np
 
 # In case previous experiments didn't close properly
@@ -283,52 +284,8 @@ def main():
     test_prompts = []
     eval_prompts = []
 
-    # Load checklist for test prompt
-    def load_checklist(phase):
-        checklist_path = os.path.join(
-            os.path.dirname(__file__), "checklists", f"{phase}.md"
-        )
-        try:
-            with open(checklist_path, "r") as f:
-                return f.read()
-        except FileNotFoundError:
-            logger.warning(f"Checklist file not found: {checklist_path}")
-            return ""
-
-    ALL_CHECKLISTS = f"""
-{load_checklist("opening")}
-
----
-
-{load_checklist("midgame")}
-
----
-
-{load_checklist("endgame")}
-"""
-
-    system_prompt = f"""You are a chess engine. Given a chess position, analyze the position and determine the best move.
-
-First, analyze the position inside <think> tags, using the following checklists to guide your thinking:
-
-{ALL_CHECKLISTS}
-
-Choose the most appropriate checklist(s) based on the game phase and work through them systematically as you analyze the position. Then provide your chosen move in UCI format inside \\boxed{{}} tags.
-
-Example format:
-<think>
-The position appears to be in the [opening/middlegame/endgame] phase. Following the relevant checklist:
-
-1. Safety & Basic Tactics:
-- My king is safe on g1, not in check
-- No pieces are hanging
-- No immediate captures available...
-
-2. [Continue through the relevant checklist sections...]
-
-Based on this analysis, the best move is...
-</think>
-\\boxed{{f3e5}}"""
+    # Get system prompt from shared utility
+    system_prompt = get_chess_system_prompt()
 
     # Training arguments with evaluation
     training_args = SFTConfig(
