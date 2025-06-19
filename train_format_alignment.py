@@ -29,6 +29,7 @@ class FormatValidationCallback(TrainerCallback):
     """Callback to validate format during training"""
 
     def __init__(self, tokenizer, test_prompts, inference_steps=500):
+        tokenizer.padding_side = "left"
         self.tokenizer = tokenizer
         self.test_prompts = test_prompts
         self.inference_steps = inference_steps
@@ -51,8 +52,6 @@ class FormatValidationCallback(TrainerCallback):
             inputs = self.tokenizer(
                 test_prompt,
                 return_tensors="pt",
-                truncation=True,
-                max_length=1024,
             ).to(model.device)
 
             # Generate
@@ -60,14 +59,14 @@ class FormatValidationCallback(TrainerCallback):
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=512,  # Longer for thinking
+                    max_new_tokens=2048,  # Longer for thinking
                     temperature=0.7,
                     do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
                 )
 
             # Decode and print
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            print(f"Response in format compliance: {response}")
             # Only show the assistant response part
             if "<|im_start|>assistant" in response:
                 assistant_part = response.split("<|im_start|>assistant")[-1].strip()
@@ -94,6 +93,7 @@ class FormatComplianceMetricsCallback(TrainerCallback):
     """Callback to compute format compliance metrics during evaluation"""
 
     def __init__(self, tokenizer, eval_prompts):
+        tokenizer.padding_side = "left"
         self.tokenizer = tokenizer
         self.eval_prompts = eval_prompts
         self.format_compliance_scores = []
@@ -116,20 +116,22 @@ class FormatComplianceMetricsCallback(TrainerCallback):
             inputs = self.tokenizer(
                 test_prompt,
                 return_tensors="pt",
-                truncation=True,
-                max_length=1024,
             ).to(model.device)
 
+            logger.info(f"Format Compliance INPUTS")
+            logger.info(inputs)
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=512,
+                    max_new_tokens=2048,
                     temperature=0.7,
                     do_sample=True,
                     pad_token_id=self.tokenizer.eos_token_id,
                 )
+            response = self.tokenizer.decode(outputs[-1], skip_special_tokens=True)
+            logger.info(f"Format Compliance Response")
+            logger.info(response)
 
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             if "<|im_start|>assistant" in response:
                 assistant_part = response.split("<|im_start|>assistant")[-1].strip()
             else:
@@ -174,6 +176,19 @@ class FormatComplianceMetricsCallback(TrainerCallback):
 
         return control
 
+
+def prepare_format_dataset(examples):
+    """Prepare the format alignment dataset"""
+    # The dataset should already be in the correct format with messages
+    # We just need to extract the text field
+    texts = []
+
+    for messages in examples["messages"]:
+        # Apply chat template to the messages
+        text = tokenizer.apply_chat_template(messages, tokenize=False)
+        texts.append(text)
+
+    return {"text": texts}
 
 
 def main():
@@ -231,8 +246,6 @@ def main():
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.padding_side = "left"
-    tokenizer.pad_token = tokenizer.eos_token
 
     # Load model
     device_string = PartialState().process_index
@@ -317,65 +330,6 @@ Based on this analysis, the best move is...
 </think>
 \\boxed{{f3e5}}"""
 
-    # Create test positions for validation and evaluation
-    test_positions = [
-        """Current game position:
-
-Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1c4 g8f6
-Turn: White
-
-Current board state:
-  a b c d e f g h
-  ----------------
-8| r . b q k b . r |8
-7| p p p p . p p p |7
-6| . . n . . n . . |6
-5| . . . . p . . . |5
-4| . . B . P . . . |4
-3| . . . . . N . . |3
-2| P P P P . P P P |2
-1| R N B Q K . . R |1
-  ----------------
-  a b c d e f g h
-
-What is the best move? Analyze the position and provide your answer.""",
-        """Current game position:
-
-Move history (UCI format): d2d4 g8f6 c2c4 e7e6 g1f3 d7d5
-Turn: White
-
-Current board state:
-  a b c d e f g h
-  ----------------
-8| r n b q k b . r |8
-7| p p p . . p p p |7
-6| . . . . p n . . |6
-5| . . . p . . . . |5
-4| . . P P . . . . |4
-3| . . . . . N . . |3
-2| P P . . P P P P |2
-1| R N B Q K B . R |1
-  ----------------
-  a b c d e f g h
-
-What is the best move? Analyze the position and provide your answer.""",
-    ]
-
-    # Create prompts for both validation and evaluation
-    for test_position in test_positions:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": test_position},
-        ]
-
-        # Apply chat template and add <think> prefix
-        test_prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        test_prompt += "<think>"
-        test_prompts.append(test_prompt)
-        eval_prompts.append(test_prompt)
-
     # Training arguments with evaluation
     training_args = SFTConfig(
         output_dir=args.output_dir,
@@ -384,17 +338,17 @@ What is the best move? Analyze the position and provide your answer.""",
         gradient_accumulation_steps=1,
         num_train_epochs=1,  # Usually one epoch is enough for format alignment
         max_steps=args.max_steps,
-        learning_rate=5e-6,  # Lower learning rate to preserve capabilities
+        learning_rate=1e-6,  # Lower learning rate to preserve capabilities
         warmup_steps=50,
         logging_steps=10,
         save_steps=args.eval_steps,
         save_total_limit=2,
         save_strategy="steps",
-        eval_strategy="steps",  # Enable evaluation
-        eval_steps=args.eval_steps,  # Evaluate every N steps
-        metric_for_best_model="eval_loss",  # Use eval loss for model selection
-        greater_is_better=False,  # Lower loss is better
-        load_best_model_at_end=True,  # Load best model when training ends
+        # eval_strategy="steps",  # Enable evaluation
+        # eval_steps=args.eval_steps,  # Evaluate every N steps
+        # metric_for_best_model="eval_loss",  # Use eval loss for model selection
+        # greater_is_better=False,  # Lower loss is better
+        # load_best_model_at_end=True,  # Load best model when training ends
         bf16=True,
         optim="adamw_torch",
         max_grad_norm=1.0,
@@ -402,9 +356,9 @@ What is the best move? Analyze the position and provide your answer.""",
         # Completion only, to train on what we really care about
         completion_only_loss=True,
         # SFT specific parameters
-        max_length=1024,
+        max_length=4096,
         packing=False,
-        dataset_text_field="text",
+        # dataset_text_field="text",
         report_to="none" if DEBUG else "wandb",
         push_to_hub=not DEBUG,
         hub_strategy="end",
@@ -414,18 +368,6 @@ What is the best move? Analyze the position and provide your answer.""",
         use_liger_kernel=True,
         # Gradient checkpointing for memory efficiency
         gradient_checkpointing=True,
-    )
-
-    # Create callbacks
-    format_validation_callback = FormatValidationCallback(
-        tokenizer=tokenizer,
-        test_prompts=test_prompts,
-        inference_steps=100,  # Check more frequently
-    )
-
-    format_metrics_callback = FormatComplianceMetricsCallback(
-        tokenizer=tokenizer,
-        eval_prompts=eval_prompts,
     )
 
     # Early stopping callback
@@ -439,13 +381,8 @@ What is the best move? Analyze the position and provide your answer.""",
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,  # Add evaluation dataset
+        # eval_dataset=eval_dataset,  # Add evaluation dataset
         processing_class=tokenizer,
-        callbacks=[
-            format_validation_callback,
-            format_metrics_callback,
-            early_stopping_callback,
-        ],
     )
 
     # Fine-tune the model
@@ -468,7 +405,7 @@ What is the best move? Analyze the position and provide your answer.""",
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=1024,
+            max_new_tokens=2048,
             temperature=0.7,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id,

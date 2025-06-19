@@ -253,7 +253,7 @@ What is the best move? Analyze the position and provide your answer."""
 def main():
     # Model configuration
     base_model_path = (
-        "./chess_sft_qwen_hf/checkpoint-5000/"  # Need to first download the model
+        "./chess_format_aligned/checkpoint-160/"  # Need to first download the model
     )
 
     # Parse command line arguments
@@ -308,8 +308,8 @@ def main():
         gradient_checkpointing=True,
         # Generation parameters
         num_generations=8,
-        max_prompt_length=1024,
-        max_completion_length=512,  # Longer to accommodate thinking
+        max_prompt_length=2048,
+        max_completion_length=2048,  # Longer to accommodate thinking
         temperature=0.8,
         top_p=0.95,
         # GRPO specific parameters
