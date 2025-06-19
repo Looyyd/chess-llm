@@ -3,6 +3,8 @@
 
 import torch
 import os
+import random
+import chess
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -13,8 +15,9 @@ from accelerate import PartialState
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
-from utils.chess_utils import extract_move_from_completion, has_thinking_tags
-from utils.prompt_utils import get_chess_system_prompt
+from utils.chess_utils import extract_move_from_completion, has_thinking_tags, board_to_grid
+from utils.dataset_utils import select_weighted_position, reconstruct_board_position
+from utils.prompt_utils import get_chess_system_prompt, create_chess_user_prompt, format_chess_messages
 import numpy as np
 
 # In case previous experiments didn't close properly
@@ -26,101 +29,65 @@ logger = logging.getLogger(__name__)
 DEBUG = False
 
 
-class FormatValidationCallback(TrainerCallback):
-    """Callback to validate format during training"""
+class SimpleProgressCallback(TrainerCallback):
+    """Simple callback that generates one response every 10 steps to show training progress"""
 
-    def __init__(self, tokenizer, test_prompts, inference_steps=500):
-        tokenizer.padding_side = "left"
+    def __init__(self, tokenizer, chess_dataset, inference_steps=10):
         self.tokenizer = tokenizer
-        self.test_prompts = test_prompts
+        self.chess_dataset = chess_dataset
         self.inference_steps = inference_steps
+        self.system_prompt = get_chess_system_prompt()
 
     def on_step_end(self, args, state, control, **kwargs):
         # Run inference every `inference_steps` steps
         if state.global_step % self.inference_steps == 0 and state.global_step > 0:
             model = kwargs["model"]
 
-            logger.info(f"\n{'='*50}")
-            logger.info(f"Running format validation at step {state.global_step}")
-            logger.info(f"{'='*50}")
+            logger.info(f"\n{'='*60}")
+            logger.info(f"PROGRESS CHECK - Step {state.global_step}")
+            logger.info(f"{'='*60}")
 
-            # Test on a random prompt
-            import random
+            # Create a random chess position prompt
+            game_idx = random.randint(0, len(self.chess_dataset) - 1)
+            game = self.chess_dataset[game_idx]
+            moves = game["moves"]
+            
+            # Skip if game is too short
+            if len(moves) < 8:
+                return
+                
+            # Select weighted position
+            position_idx = select_weighted_position(moves)
+            
+            # Reconstruct board position
+            board, move_history, move_history_str = reconstruct_board_position(
+                moves, position_idx
+            )
+            
+            # Determine whose turn it is
+            turn = "White" if board.turn == chess.WHITE else "Black"
+            
+            # Create board visualization
+            board_grid = board_to_grid(board)
+            
+            # Create user prompt using shared utility
+            user_prompt = create_chess_user_prompt(board_grid, move_history_str, turn)
+            
+            # Format as messages for chat template
+            messages = format_chess_messages(self.system_prompt, user_prompt)
+            
+            # Apply chat template
+            prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
 
-            test_prompt = random.choice(self.test_prompts)
+            logger.info(f"Position: {turn} to move after {position_idx} moves")
+            logger.info(f"Board:\n{board_grid}")
 
-            # Prepare the input
-            inputs = self.tokenizer(
-                test_prompt,
-                return_tensors="pt",
-            ).to(model.device)
-
-            # Generate
+            # Generate response
             model.eval()
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=2048,  # Longer for thinking
-                    temperature=0.7,
-                    do_sample=True,
-                )
-
-            # Decode and print
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            print(f"Response in format compliance: {response}")
-            # Only show the assistant response part
-            if "<|im_start|>assistant" in response:
-                assistant_part = response.split("<|im_start|>assistant")[-1].strip()
-            else:
-                assistant_part = response
-
-            logger.info(
-                f"Model response:\n{assistant_part[:500]}..."
-            )  # First 500 chars
-
-            # Check format compliance
-            has_think = has_thinking_tags(assistant_part)
-            predicted_move = extract_move_from_completion(assistant_part)
-
-            logger.info(f"Has thinking tags: {has_think}")
-            logger.info(f"Extracted move: {predicted_move}")
-
-            logger.info(f"{'='*50}\n")
-
-            model.train()
-
-
-class FormatComplianceMetricsCallback(TrainerCallback):
-    """Callback to compute format compliance metrics during evaluation"""
-
-    def __init__(self, tokenizer, eval_prompts):
-        tokenizer.padding_side = "left"
-        self.tokenizer = tokenizer
-        self.eval_prompts = eval_prompts
-        self.format_compliance_scores = []
-
-    def on_evaluate(self, args, state, control, **kwargs):
-        model = kwargs["model"]
-
-        logger.info(f"\n{'='*50}")
-        logger.info("Computing format compliance metrics on evaluation set")
-        logger.info(f"{'='*50}")
-
-        has_thinking_count = 0
-        has_move_count = 0
-        total_samples = min(10, len(self.eval_prompts))  # Evaluate on up to 10 samples
-
-        model.eval()
-        for i in range(total_samples):
-            test_prompt = self.eval_prompts[i % len(self.eval_prompts)]
-
-            inputs = self.tokenizer(
-                test_prompt,
-                return_tensors="pt",
-            ).to(model.device)
-
-            logger.info(f"Format Compliance INPUTS")
-            logger.info(inputs)
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(model.device)
+            
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
@@ -128,54 +95,28 @@ class FormatComplianceMetricsCallback(TrainerCallback):
                     temperature=0.7,
                     do_sample=True,
                     pad_token_id=self.tokenizer.eos_token_id,
+                    return_dict_in_generate=True,
                 )
-            response = self.tokenizer.decode(outputs[-1], skip_special_tokens=True)
-            logger.info(f"Format Compliance Response")
-            logger.info(response)
 
-            if "<|im_start|>assistant" in response:
-                assistant_part = response.split("<|im_start|>assistant")[-1].strip()
-            else:
-                assistant_part = response
+            # Extract only the newly generated tokens (excluding the input prompt)
+            input_length = inputs['input_ids'].shape[1]
+            generated_tokens = outputs.sequences[0][input_length:]
+            
+            # Decode only the newly generated part
+            assistant_response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-            # Check format compliance
-            has_think = has_thinking_tags(assistant_part)
-            predicted_move = extract_move_from_completion(assistant_part)
+            logger.info(f"\nModel Response:")
+            logger.info("-" * 40)
+            logger.info(assistant_response)
+            logger.info("-" * 40)
 
-            if has_think:
-                has_thinking_count += 1
-            if predicted_move:
-                has_move_count += 1
+            # Quick format analysis
+            has_think = "<think>" in assistant_response and "</think>" in assistant_response
+            has_boxed = "\\boxed{" in assistant_response and "}" in assistant_response
+            logger.info(f"Format: Think={has_think}, Boxed={has_boxed}")
 
-        thinking_rate = has_thinking_count / total_samples
-        move_rate = has_move_count / total_samples
-
-        logger.info(f"Format Compliance Metrics:")
-        logger.info(
-            f"  Thinking tags rate: {thinking_rate:.2%} ({has_thinking_count}/{total_samples})"
-        )
-        logger.info(
-            f"  Valid move rate: {move_rate:.2%} ({has_move_count}/{total_samples})"
-        )
-        logger.info(f"{'='*50}\n")
-
-        # Store for tracking
-        self.format_compliance_scores.append(
-            {
-                "step": state.global_step,
-                "thinking_rate": thinking_rate,
-                "move_rate": move_rate,
-            }
-        )
-
-        model.train()
-
-        # Add metrics to the evaluation results
-        if "metrics" in kwargs:
-            kwargs["metrics"]["eval_thinking_rate"] = thinking_rate
-            kwargs["metrics"]["eval_move_rate"] = move_rate
-
-        return control
+            logger.info(f"{'='*60}\n")
+            model.train()
 
 
 def prepare_format_dataset(examples):
@@ -280,9 +221,15 @@ def main():
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Eval dataset size: {len(eval_dataset)}")
 
-    # Prepare test prompts for validation callback
-    test_prompts = []
-    eval_prompts = []
+    # Load chess dataset for callback (using same dataset as training for position generation)
+    chess_dataset = load_dataset(
+        "Looyyd/chess-dataset",
+        data_files={"train": "train.jsonl"},
+        split="train",
+        streaming=False,
+    )
+    if DEBUG:
+        chess_dataset = chess_dataset.take(100)
 
     # Get system prompt from shared utility
     system_prompt = get_chess_system_prompt()
@@ -301,11 +248,11 @@ def main():
         save_steps=args.eval_steps,
         save_total_limit=2,
         save_strategy="steps",
-        # eval_strategy="steps",  # Enable evaluation
-        # eval_steps=args.eval_steps,  # Evaluate every N steps
-        # metric_for_best_model="eval_loss",  # Use eval loss for model selection
-        # greater_is_better=False,  # Lower loss is better
-        # load_best_model_at_end=True,  # Load best model when training ends
+        eval_strategy="steps",  # Enable evaluation
+        eval_steps=args.eval_steps,  # Evaluate every N steps
+        metric_for_best_model="eval_loss",  # Use eval loss for model selection
+        greater_is_better=False,  # Lower loss is better
+        load_best_model_at_end=True,  # Load best model when training ends
         bf16=True,
         optim="adamw_torch",
         max_grad_norm=1.0,
@@ -327,10 +274,11 @@ def main():
         gradient_checkpointing=True,
     )
 
-    # Early stopping callback
-    early_stopping_callback = EarlyStoppingCallback(
-        early_stopping_patience=args.early_stopping_patience,
-        early_stopping_threshold=args.early_stopping_threshold,
+    # Create our simple progress callback
+    progress_callback = SimpleProgressCallback(
+        tokenizer=tokenizer,
+        chess_dataset=chess_dataset,
+        inference_steps=10
     )
 
     # Initialize trainer with evaluation dataset
@@ -338,8 +286,9 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        # eval_dataset=eval_dataset,  # Add evaluation dataset
+        eval_dataset=eval_dataset,  # Add evaluation dataset
         processing_class=tokenizer,
+        callbacks=[progress_callback],  # Add our progress callback
     )
 
     # Fine-tune the model
