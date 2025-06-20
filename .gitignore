@@ -6,3 +6,5 @@ __pycache__
 chess_lora_qwen/
 
 .env
+
+chess_sft_qwen_hf/
