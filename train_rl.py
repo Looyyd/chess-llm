@@ -37,8 +37,8 @@ DEBUG = False
 # STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"
 STOCKFISH_PATH = r"/usr/games/stockfish"
 
-STOCKFISH_TIME_LIMIT = 0.1  # Time limit for stockfish analysis in seconds
-STOCKFISH_DEPTH = 15  # Depth for stockfish analysis
+STOCKFISH_TIME_LIMIT = 1  # Time limit for stockfish analysis in seconds
+STOCKFISH_DEPTH = 20  # Depth for stockfish analysis
 
 # Initialize Stockfish engine globally to avoid repeated initialization
 try:
@@ -132,11 +132,11 @@ def chess_reward_function(prompts, completions, **kwargs):
                 eval_after = evaluate_position(board)
 
                 # Calculate reward as the change in evaluation
-                # Note: We need to negate for black's moves
-                if board.turn == chess.BLACK:  # After the move, turn switches
-                    reward = (eval_after - eval_before) / 100  # Centipawns to pawns
-                else:
-                    reward = (eval_before - eval_after) / 100
+                # Since Stockfish's relative evaluation is always from the perspective of the side to move:
+                # - eval_before is from the perspective of the player making the move
+                # - eval_after is from the perspective of the opponent (after turn switches)
+                # So we need to negate eval_after to get both from the same perspective
+                reward = (-eval_after - eval_before) / 100  # Centipawns to pawns
 
                 # Clip reward to reasonable range, and this ensures that play reward is always better than invalid format
                 # To avoid reward hacking with invalid moves
