@@ -15,9 +15,17 @@ from accelerate import PartialState
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
-from utils.chess_utils import extract_move_from_completion, has_thinking_tags, board_to_grid
+from utils.chess_utils import (
+    extract_move_from_completion,
+    has_thinking_tags,
+    board_to_grid,
+)
 from utils.dataset_utils import select_weighted_position, reconstruct_board_position
-from utils.prompt_utils import get_chess_system_prompt, create_chess_user_prompt, format_chess_messages
+from utils.prompt_utils import (
+    get_chess_system_prompt,
+    create_chess_user_prompt,
+    format_chess_messages,
+)
 import numpy as np
 
 # In case previous experiments didn't close properly
@@ -51,31 +59,31 @@ class SimpleProgressCallback(TrainerCallback):
             game_idx = random.randint(0, len(self.chess_dataset) - 1)
             game = self.chess_dataset[game_idx]
             moves = game["moves"]
-            
+
             # Skip if game is too short
             if len(moves) < 8:
                 return
-                
+
             # Select weighted position
             position_idx = select_weighted_position(moves)
-            
+
             # Reconstruct board position
             board, move_history, move_history_str = reconstruct_board_position(
                 moves, position_idx
             )
-            
+
             # Determine whose turn it is
             turn = "White" if board.turn == chess.WHITE else "Black"
-            
+
             # Create board visualization
             board_grid = board_to_grid(board)
-            
+
             # Create user prompt using shared utility
             user_prompt = create_chess_user_prompt(board_grid, move_history_str, turn)
-            
+
             # Format as messages for chat template
             messages = format_chess_messages(self.system_prompt, user_prompt)
-            
+
             # Apply chat template
             prompt = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -87,7 +95,7 @@ class SimpleProgressCallback(TrainerCallback):
             # Generate response
             model.eval()
             inputs = self.tokenizer(prompt, return_tensors="pt").to(model.device)
-            
+
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
@@ -99,11 +107,13 @@ class SimpleProgressCallback(TrainerCallback):
                 )
 
             # Extract only the newly generated tokens (excluding the input prompt)
-            input_length = inputs['input_ids'].shape[1]
+            input_length = inputs["input_ids"].shape[1]
             generated_tokens = outputs.sequences[0][input_length:]
-            
+
             # Decode only the newly generated part
-            assistant_response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            assistant_response = self.tokenizer.decode(
+                generated_tokens, skip_special_tokens=True
+            )
 
             logger.info(f"\nModel Response:")
             logger.info("-" * 40)
@@ -111,7 +121,9 @@ class SimpleProgressCallback(TrainerCallback):
             logger.info("-" * 40)
 
             # Quick format analysis
-            has_think = "<think>" in assistant_response and "</think>" in assistant_response
+            has_think = (
+                "<think>" in assistant_response and "</think>" in assistant_response
+            )
             has_boxed = "\\boxed{" in assistant_response and "}" in assistant_response
             logger.info(f"Format: Think={has_think}, Boxed={has_boxed}")
 
@@ -137,6 +149,8 @@ def main():
     global tokenizer  # Make tokenizer global for the prepare function
 
     # Model configuration - using the model from the first SFT stage
+    # Should be downloaded with 
+    # huggingface-cli download Looyyd/chess-sft-qwen --local-dir './chess_sft_qwen_hf/' --exclude "*00*optim_states.pt"
     model_name = "./chess_sft_qwen_hf/checkpoint-5000/"  # Output from train_sft.py
 
     # Parse arguments
@@ -276,9 +290,7 @@ def main():
 
     # Create our simple progress callback
     progress_callback = SimpleProgressCallback(
-        tokenizer=tokenizer,
-        chess_dataset=chess_dataset,
-        inference_steps=10
+        tokenizer=tokenizer, chess_dataset=chess_dataset, inference_steps=10
     )
 
     # Initialize trainer with evaluation dataset
