@@ -211,6 +211,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
+        use_cache=False, # prevents an error ?
         attn_implementation="flash_attention_2",
     )
 
