@@ -11,7 +11,7 @@ from transformers import (
     TrainerCallback,
     EarlyStoppingCallback,
 )
-from accelerate import PartialState
+from accelerate import PartialState, Accelerator
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 import logging
@@ -31,6 +31,9 @@ import numpy as np
 # In case previous experiments didn't close properly
 torch.cuda.empty_cache()
 
+# Initialize accelerator for logging control
+accelerator = Accelerator()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -48,7 +51,7 @@ class SimpleProgressCallback(TrainerCallback):
 
     def on_step_end(self, args, state, control, **kwargs):
         # Run inference every `inference_steps` steps
-        if state.global_step % self.inference_steps == 0 and state.global_step > 0:
+        if state.global_step % self.inference_steps == 0 and state.global_step > 0 and accelerator.is_main_process:
             model = kwargs["model"]
 
             logger.info(f"\n{'='*60}")
@@ -212,7 +215,8 @@ def main():
     )
 
     # Load dataset from Hugging Face
-    logger.info(f"Loading dataset from {args.dataset}...")
+    if accelerator.is_main_process:
+        logger.info(f"Loading dataset from {args.dataset}...")
     dataset = load_dataset(
         args.dataset,
         data_files={"train": "train.jsonl"},
@@ -224,7 +228,8 @@ def main():
         dataset = dataset.select(range(min(100, len(dataset))))
 
     # Split the dataset into train and eval
-    logger.info(f"Splitting dataset with eval ratio: {args.eval_split_ratio}")
+    if accelerator.is_main_process:
+        logger.info(f"Splitting dataset with eval ratio: {args.eval_split_ratio}")
     split_dataset = dataset.train_test_split(
         test_size=args.eval_split_ratio, seed=42, shuffle=True  # For reproducibility
     )
@@ -232,8 +237,9 @@ def main():
     train_dataset = split_dataset["train"]
     eval_dataset = split_dataset["test"]
 
-    logger.info(f"Train dataset size: {len(train_dataset)}")
-    logger.info(f"Eval dataset size: {len(eval_dataset)}")
+    if accelerator.is_main_process:
+        logger.info(f"Train dataset size: {len(train_dataset)}")
+        logger.info(f"Eval dataset size: {len(eval_dataset)}")
 
     # Load chess dataset for callback (using same dataset as training for position generation)
     chess_dataset = load_dataset(
@@ -304,12 +310,14 @@ def main():
     )
 
     # Fine-tune the model
-    logger.info("Starting format alignment training with evaluation...")
+    if accelerator.is_main_process:
+        logger.info("Starting format alignment training with evaluation...")
     trainer.train()
 
     # Save the model
     trainer.save_model()
-    logger.info(f"Training complete! Model saved to {args.output_dir}")
+    if accelerator.is_main_process:
+        logger.info(f"Training complete! Model saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
