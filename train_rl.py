@@ -201,7 +201,7 @@ def prepare_chess_dataset(examples, tokenizer):
 def main():
     # Model configuration
     base_model_path = (
-        "./chess_format_aligned/checkpoint-160/"  # Need to first download the model
+        "Looyyd/chess-format-aligned-qwen" 
     )
 
     # Parse command line arguments
