@@ -1,0 +1,500 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import json
+import os
+import chess
+import chess.engine
+import chess.svg
+from flask import Flask, render_template, jsonify, request, send_from_directory
+from flask_cors import CORS
+from datasets import load_dataset
+from utils.dataset_utils import select_weighted_position, reconstruct_board_position
+from utils.chess_utils import board_to_grid
+import logging
+import whisper
+import tempfile
+import numpy as np
+from datetime import datetime
+import soundfile as sf
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+CORS(app)
+
+# Configuration
+# STOCKFISH_PATH = r"/usr/games/stockfish"  # Update this path
+STOCKFISH_PATH = r"C:\Users\filip\dev\stockfish\stockfish-windows-x86-64-avx2.exe"
+STOCKFISH_TIME_LIMIT = 2
+STOCKFISH_DEPTH = 20
+OUTPUT_DIR = "manual_chess_dataset"
+AUDIO_DIR = os.path.join(OUTPUT_DIR, "audio_recordings")
+
+# Create output directories
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+# Global variables
+current_position_data = None
+dataset = None
+dataset_iter = None
+engine = None
+whisper_model = None
+
+
+def init_resources():
+    """Initialize Stockfish and Whisper"""
+    global engine, whisper_model, dataset, dataset_iter
+
+    try:
+        # Initialize Stockfish
+        engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+        logger.info("Stockfish initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Stockfish: {e}")
+        raise
+
+    # Initialize Whisper
+    try:
+        whisper_model = whisper.load_model("base")
+        logger.info("Whisper model loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load Whisper model: {e}")
+        raise
+
+    # Load chess dataset
+    logger.info("Loading chess dataset...")
+    dataset = load_dataset(
+        "Looyyd/chess-dataset",
+        data_files={"train": "train.jsonl"},
+        split="train",
+        streaming=True,  # Use streaming for efficiency
+    )
+    dataset_iter = iter(dataset)
+
+
+def get_top_moves(board, n=3):
+    """Get top N moves from Stockfish with evaluations"""
+    try:
+        # Get multiple principal variations
+        result = engine.analyse(
+            board,
+            chess.engine.Limit(time=STOCKFISH_TIME_LIMIT, depth=STOCKFISH_DEPTH),
+            multipv=n,
+        )
+
+        top_moves = []
+        for i in range(min(n, len(result))):
+            info = result[i]
+            move = info["pv"][0]
+            score = info["score"].relative
+
+            # Convert score to human-readable format
+            if score.is_mate():
+                eval_str = f"M{score.mate()}"
+            else:
+                eval_str = f"{score.score() / 100:.2f}"
+
+            top_moves.append(
+                {
+                    "move": move.uci(),
+                    "from": chess.square_name(move.from_square),
+                    "to": chess.square_name(move.to_square),
+                    "evaluation": eval_str,
+                    "san": board.san(move),
+                }
+            )
+
+        return top_moves
+    except Exception as e:
+        logger.error(f"Error getting top moves: {e}")
+        return []
+
+
+def get_next_position():
+    """Get the next chess position from the dataset"""
+    global current_position_data, dataset_iter
+
+    while True:
+        try:
+            example = next(dataset_iter)
+            moves = example["moves"]
+
+            # Skip if game is too short
+            if len(moves) < 8:
+                continue
+
+            # Select weighted position
+            position_idx = select_weighted_position(moves)
+
+            # Reconstruct board position
+            board, move_history, move_history_str = reconstruct_board_position(
+                moves, position_idx
+            )
+
+            # Get top moves from Stockfish
+            top_moves = get_top_moves(board)
+
+            # Create SVG of the board with arrows for top moves
+            arrows = []
+            colors = ["green", "yellow", "orange"]  # Different colors for 1st, 2nd, 3rd
+            for i, move_data in enumerate(top_moves[:3]):
+                move = chess.Move.from_uci(move_data["move"])
+                arrows.append(
+                    chess.svg.Arrow(move.from_square, move.to_square, color=colors[i])
+                )
+
+            board_svg = chess.svg.board(board=board, arrows=arrows, size=600)
+
+            current_position_data = {
+                "board": board,
+                "board_fen": board.fen(),
+                "board_svg": board_svg,
+                "board_grid": board_to_grid(board),
+                "move_history": move_history_str,
+                "turn": "White" if board.turn == chess.WHITE else "Black",
+                "top_moves": top_moves,
+                "position_idx": position_idx,
+                "original_moves": moves,
+            }
+
+            return current_position_data
+
+        except StopIteration:
+            # Reset iterator if we reach the end
+            dataset_iter = iter(dataset)
+            continue
+
+
+@app.route("/")
+def index():
+    """Serve the main page"""
+    return render_template("index.html")
+
+
+@app.route("/api/next_position", methods=["GET"])
+def next_position():
+    """Get the next chess position"""
+    position_data = get_next_position()
+
+    return jsonify(
+        {
+            "board_svg": position_data["board_svg"],
+            "board_fen": position_data["board_fen"],
+            "move_history": position_data["move_history"],
+            "turn": position_data["turn"],
+            "top_moves": position_data["top_moves"],
+            "board_grid": position_data["board_grid"],
+        }
+    )
+
+
+@app.route("/api/save_recording", methods=["POST"])
+def save_recording():
+    """Save audio recording and transcribe it"""
+    try:
+        # Get the audio file from the request
+        audio_file = request.files["audio"]
+
+        # Save audio to temporary file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_path = os.path.join(AUDIO_DIR, f"recording_{timestamp}.webm")
+        audio_file.save(temp_path)
+
+        # Convert to WAV for Whisper (using soundfile)
+        wav_path = temp_path.replace(".webm", ".wav")
+
+        # You might need to use ffmpeg for webm to wav conversion
+        # For now, let's assume the audio is in a format soundfile can handle
+        import subprocess
+
+        subprocess.run(
+            ["ffmpeg", "-i", temp_path, "-ar", "16000", "-ac", "1", wav_path],
+            check=True,
+        )
+
+        # Transcribe with Whisper
+        result = whisper_model.transcribe(wav_path)
+        transcription = result["text"].strip()
+
+        # Save the dataset entry with just the raw analysis
+        entry = {
+            "analysis": transcription,
+            "move_history": current_position_data["move_history"],
+            "turn": current_position_data["turn"],
+            "board_fen": current_position_data["board_fen"],
+            "board_grid": current_position_data["board_grid"],
+            "top_moves": current_position_data["top_moves"],
+            "position_idx": current_position_data["position_idx"],
+            "original_moves": current_position_data["original_moves"],
+            "audio_file": f"recording_{timestamp}.webm",
+            "timestamp": timestamp,
+        }
+
+        # Append to dataset file
+        dataset_file = os.path.join(OUTPUT_DIR, "manual_chess_dataset.jsonl")
+        with open(dataset_file, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+        # Clean up temporary WAV file
+        os.remove(wav_path)
+
+        return jsonify({"success": True, "transcription": transcription})
+
+    except Exception as e:
+        logger.error(f"Error saving recording: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/dataset_stats", methods=["GET"])
+def dataset_stats():
+    """Get statistics about the created dataset"""
+    dataset_file = os.path.join(OUTPUT_DIR, "manual_chess_dataset.jsonl")
+
+    if not os.path.exists(dataset_file):
+        return jsonify({"count": 0})
+
+    with open(dataset_file, "r") as f:
+        count = sum(1 for _ in f)
+
+    return jsonify({"count": count})
+
+
+# Create the HTML template
+html_template = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chess Dataset Creator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .board-section {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .info-section {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .recording {
+            background-color: #f44336;
+        }
+        .recording:hover {
+            background-color: #da190b;
+        }
+        .move-list {
+            margin-top: 10px;
+        }
+        .move-item {
+            padding: 5px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .move-1 { background-color: #90EE90; }
+        .move-2 { background-color: #FFFFE0; }
+        .move-3 { background-color: #FFE4B5; }
+        .transcription {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            min-height: 100px;
+        }
+        .stats {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="stats">
+        <strong>Dataset entries: <span id="dataset-count">0</span></strong>
+    </div>
+    
+    <h1>Chess Dataset Creator</h1>
+    
+    <div class="container">
+        <div class="board-section">
+            <div id="board"></div>
+            <div class="controls">
+                <button id="record-btn" onclick="toggleRecording()">Start Recording</button>
+                <button onclick="nextPosition()">Next Position</button>
+            </div>
+        </div>
+        
+        <div class="info-section">
+            <h3>Position Info</h3>
+            <p><strong>Turn:</strong> <span id="turn"></span></p>
+            <p><strong>Move History:</strong> <span id="move-history"></span></p>
+            
+            <h3>Top Stockfish Moves</h3>
+            <div id="top-moves" class="move-list"></div>
+            
+            <h3>Your Analysis</h3>
+            <div id="transcription" class="transcription">
+                Press "Start Recording" and analyze the position...
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        
+        // Initialize
+        window.onload = function() {
+            nextPosition();
+            updateStats();
+        };
+        
+        async function nextPosition() {
+            const response = await fetch('/api/next_position');
+            const data = await response.json();
+            
+            // Update board
+            document.getElementById('board').innerHTML = data.board_svg;
+            
+            // Update info
+            document.getElementById('turn').textContent = data.turn;
+            document.getElementById('move-history').textContent = data.move_history;
+            
+            // Update top moves
+            const movesHtml = data.top_moves.map((move, i) => `
+                <div class="move-item move-${i+1}">
+                    ${i+1}. ${move.san} (${move.move}) - Eval: ${move.evaluation}
+                </div>
+            `).join('');
+            document.getElementById('top-moves').innerHTML = movesHtml;
+            
+            // Clear previous transcription
+            document.getElementById('transcription').textContent = 'Press "Start Recording" and analyze the position...';
+        }
+        
+        async function toggleRecording() {
+            if (!isRecording) {
+                // Start recording
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    await uploadRecording(audioBlob);
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById('record-btn').textContent = 'Stop Recording';
+                document.getElementById('record-btn').classList.add('recording');
+            } else {
+                // Stop recording
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                isRecording = false;
+                document.getElementById('record-btn').textContent = 'Start Recording';
+                document.getElementById('record-btn').classList.remove('recording');
+            }
+        }
+        
+        async function uploadRecording(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+            
+            document.getElementById('transcription').textContent = 'Transcribing...';
+            
+            try {
+                const response = await fetch('/api/save_recording', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('transcription').innerHTML = `
+                        <strong>Your analysis:</strong><br>
+                        ${data.transcription}
+                    `;
+                    updateStats();
+                } else {
+                    document.getElementById('transcription').textContent = 'Error: ' + data.error;
+                }
+            } catch (error) {
+                document.getElementById('transcription').textContent = 'Error uploading recording';
+                console.error(error);
+            }
+        }
+        
+        async function updateStats() {
+            const response = await fetch('/api/dataset_stats');
+            const data = await response.json();
+            document.getElementById('dataset-count').textContent = data.count;
+        }
+    </script>
+</body>
+</html>
+"""
+
+# Create templates directory and save the HTML
+os.makedirs("templates", exist_ok=True)
+with open("templates/index.html", "w") as f:
+    f.write(html_template)
+
+if __name__ == "__main__":
+    try:
+        logger.info("Initializing resources...")
+        init_resources()
+        logger.info("Starting Flask server on http://localhost:5000")
+        app.run(debug=True, port=5000)
+    finally:
+        if engine:
+            engine.quit()

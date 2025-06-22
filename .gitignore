@@ -8,3 +8,5 @@ chess_lora_qwen/
 .env
 
 chess_sft_qwen_hf/
+
+manual_chess_dataset/
