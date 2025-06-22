@@ -43,6 +43,7 @@ dataset = None
 dataset_iter = None
 engine = None
 whisper_model = None
+last_entry_id = None
 
 
 def init_resources():
@@ -114,6 +115,42 @@ def get_top_moves(board, n=3):
         return []
 
 
+def create_pgn_from_position(board, move_history_str):
+    """Create a PGN string from the current position"""
+    import chess.pgn
+    import io
+
+    # Create a game with the moves
+    game = chess.pgn.Game()
+
+    # Add basic headers
+    game.headers["Event"] = "Training Position"
+    game.headers["Site"] = "Chess Dataset Creator"
+    game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
+    game.headers["White"] = "?"
+    game.headers["Black"] = "?"
+
+    # Replay moves to get to current position
+    if move_history_str:
+        moves = move_history_str.split()
+        node = game
+        board_temp = chess.Board()
+        for move_uci in moves:
+            try:
+                move = chess.Move.from_uci(move_uci)
+                node = node.add_variation(move)
+                board_temp.push(move)
+            except:
+                pass
+
+    # Convert to PGN string
+    pgn_io = io.StringIO()
+    exporter = chess.pgn.FileExporter(pgn_io)
+    game.accept(exporter)
+
+    return pgn_io.getvalue()
+
+
 def get_next_position():
     """Get the next chess position from the dataset"""
     global current_position_data, dataset_iter
@@ -149,6 +186,9 @@ def get_next_position():
 
             board_svg = chess.svg.board(board=board, arrows=arrows, size=600)
 
+            # Create PGN for easy import to Lichess
+            pgn_string = create_pgn_from_position(board, move_history_str)
+
             current_position_data = {
                 "board": board,
                 "board_fen": board.fen(),
@@ -159,6 +199,7 @@ def get_next_position():
                 "top_moves": top_moves,
                 "position_idx": position_idx,
                 "original_moves": moves,
+                "pgn": pgn_string,
             }
 
             return current_position_data
@@ -188,6 +229,7 @@ def next_position():
             "turn": position_data["turn"],
             "top_moves": position_data["top_moves"],
             "board_grid": position_data["board_grid"],
+            "pgn": position_data["pgn"],
         }
     )
 
@@ -242,10 +284,50 @@ def save_recording():
         # Clean up temporary WAV file
         os.remove(wav_path)
 
-        return jsonify({"success": True, "transcription": transcription})
+        # Keep track of the latest entry ID for deletion
+        global last_entry_id
+        last_entry_id = timestamp
+
+        return jsonify(
+            {"success": True, "transcription": transcription, "entry_id": timestamp}
+        )
 
     except Exception as e:
         logger.error(f"Error saving recording: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/delete_last", methods=["POST"])
+def delete_last_recording():
+    """Delete or mark the last recording as invalid"""
+    try:
+        dataset_file = os.path.join(OUTPUT_DIR, "manual_chess_dataset.jsonl")
+
+        # Read all entries
+        entries = []
+        if os.path.exists(dataset_file):
+            with open(dataset_file, "r") as f:
+                for line in f:
+                    entries.append(json.loads(line))
+
+        if not entries:
+            return jsonify({"success": False, "error": "No entries to delete"})
+
+        # Mark the last entry as invalid instead of deleting
+        # This preserves the data in case you change your mind
+        last_entry = entries[-1]
+        last_entry["invalid"] = True
+        last_entry["invalidated_at"] = datetime.now().isoformat()
+
+        # Rewrite the file with the updated entry
+        with open(dataset_file, "w") as f:
+            for entry in entries:
+                f.write(json.dumps(entry) + "\n")
+
+        return jsonify({"success": True, "message": "Last entry marked as invalid"})
+
+    except Exception as e:
+        logger.error(f"Error deleting last recording: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -255,12 +337,19 @@ def dataset_stats():
     dataset_file = os.path.join(OUTPUT_DIR, "manual_chess_dataset.jsonl")
 
     if not os.path.exists(dataset_file):
-        return jsonify({"count": 0})
+        return jsonify({"count": 0, "valid_count": 0})
+
+    total_count = 0
+    valid_count = 0
 
     with open(dataset_file, "r") as f:
-        count = sum(1 for _ in f)
+        for line in f:
+            total_count += 1
+            entry = json.loads(line)
+            if not entry.get("invalid", False):
+                valid_count += 1
 
-    return jsonify({"count": count})
+    return jsonify({"count": total_count, "valid_count": valid_count})
 
 
 # Create the HTML template
@@ -349,11 +438,36 @@ html_template = """
             border-radius: 4px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+        .delete-btn {
+            background-color: #ff6b6b;
+        }
+        .delete-btn:hover {
+            background-color: #ff5252;
+        }
+        .pgn-section {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        .copy-btn {
+            background-color: #2196F3;
+            padding: 5px 10px;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .copy-btn:hover {
+            background-color: #0b7dda;
+        }
     </style>
 </head>
 <body>
     <div class="stats">
-        <strong>Dataset entries: <span id="dataset-count">0</span></strong>
+        <strong>Total entries: <span id="dataset-count">0</span></strong><br>
+        <strong>Valid entries: <span id="valid-count">0</span></strong>
     </div>
     
     <h1>Chess Dataset Creator</h1>
@@ -364,6 +478,7 @@ html_template = """
             <div class="controls">
                 <button id="record-btn" onclick="toggleRecording()">Start Recording</button>
                 <button onclick="nextPosition()">Next Position</button>
+                <button class="delete-btn" onclick="deleteLastRecording()">Delete Last Recording</button>
             </div>
         </div>
         
@@ -379,6 +494,12 @@ html_template = """
             <div id="transcription" class="transcription">
                 Press "Start Recording" and analyze the position...
             </div>
+            
+            <h3>PGN (for Lichess import)</h3>
+            <div class="pgn-section">
+                <div id="pgn-text"></div>
+                <button class="copy-btn" onclick="copyPGN()">Copy PGN</button>
+            </div>
         </div>
     </div>
     
@@ -386,6 +507,7 @@ html_template = """
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
+        let currentPGN = '';
         
         // Initialize
         window.onload = function() {
@@ -412,8 +534,46 @@ html_template = """
             `).join('');
             document.getElementById('top-moves').innerHTML = movesHtml;
             
+            // Update PGN
+            currentPGN = data.pgn;
+            document.getElementById('pgn-text').textContent = data.pgn;
+            
             // Clear previous transcription
             document.getElementById('transcription').textContent = 'Press "Start Recording" and analyze the position...';
+        }
+        
+        function copyPGN() {
+            navigator.clipboard.writeText(currentPGN).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            });
+        }
+        
+        async function deleteLastRecording() {
+            if (!confirm('Are you sure you want to delete the last recording?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/delete_last', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert('Last recording marked as invalid');
+                    updateStats();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error deleting recording');
+                console.error(error);
+            }
         }
         
         async function toggleRecording() {
@@ -478,6 +638,7 @@ html_template = """
             const response = await fetch('/api/dataset_stats');
             const data = await response.json();
             document.getElementById('dataset-count').textContent = data.count;
+            document.getElementById('valid-count').textContent = data.valid_count;
         }
     </script>
 </body>
