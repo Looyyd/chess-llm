@@ -18,6 +18,8 @@ import numpy as np
 from datetime import datetime
 import soundfile as sf
 from pathlib import Path
+from openai import OpenAI
+from typing import Optional, Dict
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ STOCKFISH_TIME_LIMIT = 2
 STOCKFISH_DEPTH = 20
 OUTPUT_DIR = "manual_chess_dataset"
 AUDIO_DIR = os.path.join(OUTPUT_DIR, "audio_recordings")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Make sure to set this
 
 # Create output directories
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -44,11 +47,12 @@ dataset_iter = None
 engine = None
 whisper_model = None
 last_entry_id = None
+openai_client = None
 
 
 def init_resources():
-    """Initialize Stockfish and Whisper"""
-    global engine, whisper_model, dataset, dataset_iter
+    """Initialize Stockfish, Whisper, and OpenAI"""
+    global engine, whisper_model, dataset, dataset_iter, openai_client
 
     try:
         # Initialize Stockfish
@@ -65,6 +69,19 @@ def init_resources():
     except Exception as e:
         logger.error(f"Failed to load Whisper model: {e}")
         raise
+
+    # Initialize OpenAI
+    if OPENAI_API_KEY:
+        try:
+            openai_client = OpenAI(api_key=OPENAI_API_KEY)
+            logger.info("OpenAI client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            logger.warning("GPT-4o formatting will not be available")
+    else:
+        logger.warning(
+            "OPENAI_API_KEY not set. GPT-4o formatting will not be available"
+        )
 
     # Load chess dataset
     logger.info("Loading chess dataset...")
@@ -210,6 +227,66 @@ def get_next_position():
             continue
 
 
+def format_chess_transcript(
+    raw_transcript: str, board_fen: str, turn: str
+) -> Dict[str, Optional[str]]:
+    """
+    Use GPT-4o to format a chess transcript
+
+    Returns dict with 'reasoning_trace' and 'final_move'
+    """
+    if not openai_client:
+        logger.warning("OpenAI client not initialized, returning raw transcript")
+        return {"reasoning_trace": raw_transcript, "final_move": None}
+
+    system_prompt = """You are a chess transcript formatter. Your job is to clean up voice-to-text transcripts of chess analysis while preserving the authentic reasoning process.
+
+IMPORTANT RULES:
+1. Fix obvious voice recognition errors (e.g., "night" → "knight", "bishop" → "bishop", "pond" → "pawn")
+2. PRESERVE ALL HESITATIONS, BACKTRACKS, AND CORRECTIONS - these are valuable for the dataset
+3. Keep the natural flow of thought, including "um", "uh", "wait", "actually", etc.
+4. Do NOT add analysis that wasn't in the original transcript
+5. Do NOT remove uncertainty or changes of mind
+6. Format into readable paragraphs but maintain the original reasoning structure
+
+For the final_move field:
+- Extract the final move recommendation in UCI format (e.g., e2e4, g1f3, a7a5)
+- Only include if the speaker clearly recommends a specific move
+- If no clear final move is stated, leave as null
+- Convert from algebraic notation if needed (e4 → e2e4, Nf3 → g1f3, etc.)
+
+The transcript represents analysis of a chess position where it's {turn}'s turn to move."""
+
+    user_prompt = f"""Clean up this chess analysis transcript:
+
+Position: {board_fen}
+Turn: {turn}
+Raw transcript: "{raw_transcript}"
+
+Format the reasoning trace and extract the final move recommendation. Return a JSON object with keys "reasoning_trace" and "final_move"."""
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",  # Using mini for cost efficiency
+            messages=[
+                {"role": "system", "content": system_prompt.format(turn=turn)},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        return {
+            "reasoning_trace": result.get("reasoning_trace", raw_transcript),
+            "final_move": result.get("final_move"),
+        }
+
+    except Exception as e:
+        logger.error(f"Error formatting transcript: {e}")
+        return {"reasoning_trace": raw_transcript, "final_move": None}
+
+
 @app.route("/")
 def index():
     """Serve the main page"""
@@ -262,9 +339,18 @@ def save_recording():
         result = whisper_model.transcribe(wav_path)
         transcription = result["text"].strip()
 
-        # Save the dataset entry with just the raw analysis
+        # Format with GPT-4o if available
+        formatted_result = format_chess_transcript(
+            transcription,
+            current_position_data["board_fen"],
+            current_position_data["turn"],
+        )
+
+        # Save the dataset entry with all fields
         entry = {
-            "analysis": transcription,
+            "analysis": transcription,  # Original whisper transcript
+            "transcript_formatted": formatted_result["reasoning_trace"],
+            "final_move": formatted_result["final_move"],
             "move_history": current_position_data["move_history"],
             "turn": current_position_data["turn"],
             "board_fen": current_position_data["board_fen"],
@@ -274,6 +360,7 @@ def save_recording():
             "original_moves": current_position_data["original_moves"],
             "audio_file": f"recording_{timestamp}.webm",
             "timestamp": timestamp,
+            "gpt_formatted": openai_client is not None,
         }
 
         # Append to dataset file
@@ -289,7 +376,13 @@ def save_recording():
         last_entry_id = timestamp
 
         return jsonify(
-            {"success": True, "transcription": transcription, "entry_id": timestamp}
+            {
+                "success": True,
+                "transcription": transcription,
+                "formatted_transcript": formatted_result["reasoning_trace"],
+                "final_move": formatted_result["final_move"],
+                "entry_id": timestamp,
+            }
         )
 
     except Exception as e:
@@ -304,9 +397,11 @@ def update_analysis():
         data = request.json
         entry_id = data.get("entry_id")
         new_analysis = data.get("analysis")
+        new_formatted = data.get("transcript_formatted")
+        new_final_move = data.get("final_move")
 
-        if not entry_id or not new_analysis:
-            return jsonify({"success": False, "error": "Missing entry_id or analysis"})
+        if not entry_id:
+            return jsonify({"success": False, "error": "Missing entry_id"})
 
         dataset_file = os.path.join(OUTPUT_DIR, "manual_chess_dataset.jsonl")
 
@@ -320,7 +415,12 @@ def update_analysis():
                     entry = json.loads(line)
                     # Find and update the matching entry
                     if entry.get("timestamp") == entry_id:
-                        entry["analysis"] = new_analysis
+                        if new_analysis is not None:
+                            entry["analysis"] = new_analysis
+                        if new_formatted is not None:
+                            entry["transcript_formatted"] = new_formatted
+                        if new_final_move is not None:
+                            entry["final_move"] = new_final_move
                         entry["edited"] = True
                         entry["edited_at"] = datetime.now().isoformat()
                         updated = True
@@ -473,7 +573,7 @@ html_template = """
             border-radius: 4px;
             min-height: 100px;
         }
-        #transcription-text {
+        #transcription-text, #formatted-text {
             width: 100%;
             min-height: 150px;
             padding: 10px;
@@ -482,6 +582,19 @@ html_template = """
             font-family: Arial, sans-serif;
             font-size: 14px;
             resize: vertical;
+        }
+        #final-move {
+            width: 200px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .field-label {
+            font-weight: bold;
+            margin-top: 15px;
+            margin-bottom: 5px;
         }
         .save-edit-btn {
             background-color: #4CAF50;
@@ -558,8 +671,16 @@ html_template = """
             
             <h3>Your Analysis</h3>
             <div id="transcription" class="transcription">
+                <div class="field-label">Raw Transcript (Whisper):</div>
                 <textarea id="transcription-text" placeholder="Press 'Start Recording' and analyze the position..."></textarea>
-                <button class="save-edit-btn" onclick="saveEdit()" style="display:none;">Save Edit</button>
+                
+                <div class="field-label">Formatted Transcript (GPT-4o cleaned):</div>
+                <textarea id="formatted-text" placeholder="Formatted transcript will appear here..."></textarea>
+                
+                <div class="field-label">Final Move (UCI format, e.g., e2e4):</div>
+                <input type="text" id="final-move" placeholder="e2e4">
+                
+                <button class="save-edit-btn" onclick="saveEdit()" style="display:none;">Save All Edits</button>
                 <span id="edit-status" class="edit-status" style="display:none;"></span>
             </div>
             
@@ -583,14 +704,18 @@ html_template = """
             nextPosition();
             updateStats();
             
-            // Add change listener to textarea
-            document.getElementById('transcription-text').addEventListener('input', function() {
-                if (currentEntryId) {
-                    document.querySelector('.save-edit-btn').style.display = 'inline-block';
-                    document.getElementById('edit-status').style.display = 'none';
-                }
-            });
+            // Add change listeners to all editable fields
+            document.getElementById('transcription-text').addEventListener('input', showSaveButton);
+            document.getElementById('formatted-text').addEventListener('input', showSaveButton);
+            document.getElementById('final-move').addEventListener('input', showSaveButton);
         };
+        
+        function showSaveButton() {
+            if (currentEntryId) {
+                document.querySelector('.save-edit-btn').style.display = 'inline-block';
+                document.getElementById('edit-status').style.display = 'none';
+            }
+        }
         
         async function nextPosition() {
             const response = await fetch('/api/next_position');
@@ -615,8 +740,10 @@ html_template = """
             currentPGN = data.pgn;
             document.getElementById('pgn-text').textContent = data.pgn;
             
-            // Clear previous transcription
+            // Clear previous transcription and formatted fields
             document.getElementById('transcription-text').value = '';
+            document.getElementById('formatted-text').value = '';
+            document.getElementById('final-move').value = '';
             document.querySelector('.save-edit-btn').style.display = 'none';
             document.getElementById('edit-status').style.display = 'none';
             currentEntryId = null;
@@ -691,6 +818,8 @@ html_template = """
             formData.append('audio', audioBlob, 'recording.webm');
             
             document.getElementById('transcription-text').value = 'Transcribing...';
+            document.getElementById('formatted-text').value = 'Formatting with GPT-4o...';
+            document.getElementById('final-move').value = '';
             
             try {
                 const response = await fetch('/api/save_recording', {
@@ -701,6 +830,8 @@ html_template = """
                 const data = await response.json();
                 if (data.success) {
                     document.getElementById('transcription-text').value = data.transcription;
+                    document.getElementById('formatted-text').value = data.formatted_transcript || data.transcription;
+                    document.getElementById('final-move').value = data.final_move || '';
                     currentEntryId = data.entry_id;
                     updateStats();
                 } else {
@@ -719,6 +850,8 @@ html_template = """
             }
             
             const newAnalysis = document.getElementById('transcription-text').value;
+            const newFormatted = document.getElementById('formatted-text').value;
+            const newFinalMove = document.getElementById('final-move').value;
             
             try {
                 const response = await fetch('/api/update_analysis', {
@@ -728,7 +861,9 @@ html_template = """
                     },
                     body: JSON.stringify({
                         entry_id: currentEntryId,
-                        analysis: newAnalysis
+                        analysis: newAnalysis,
+                        transcript_formatted: newFormatted,
+                        final_move: newFinalMove || null
                     })
                 });
                 
