@@ -297,6 +297,50 @@ def save_recording():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/update_analysis", methods=["POST"])
+def update_analysis():
+    """Update the analysis text for an existing entry"""
+    try:
+        data = request.json
+        entry_id = data.get("entry_id")
+        new_analysis = data.get("analysis")
+
+        if not entry_id or not new_analysis:
+            return jsonify({"success": False, "error": "Missing entry_id or analysis"})
+
+        dataset_file = os.path.join(OUTPUT_DIR, "manual_chess_dataset.jsonl")
+
+        # Read all entries
+        entries = []
+        updated = False
+
+        if os.path.exists(dataset_file):
+            with open(dataset_file, "r") as f:
+                for line in f:
+                    entry = json.loads(line)
+                    # Find and update the matching entry
+                    if entry.get("timestamp") == entry_id:
+                        entry["analysis"] = new_analysis
+                        entry["edited"] = True
+                        entry["edited_at"] = datetime.now().isoformat()
+                        updated = True
+                    entries.append(entry)
+
+        if not updated:
+            return jsonify({"success": False, "error": "Entry not found"})
+
+        # Rewrite the file with updated entries
+        with open(dataset_file, "w") as f:
+            for entry in entries:
+                f.write(json.dumps(entry) + "\n")
+
+        return jsonify({"success": True, "message": "Analysis updated successfully"})
+
+    except Exception as e:
+        logger.error(f"Error updating analysis: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/delete_last", methods=["POST"])
 def delete_last_recording():
     """Delete or mark the last recording as invalid"""
@@ -429,6 +473,28 @@ html_template = """
             border-radius: 4px;
             min-height: 100px;
         }
+        #transcription-text {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            resize: vertical;
+        }
+        .save-edit-btn {
+            background-color: #4CAF50;
+            margin-top: 10px;
+        }
+        .save-edit-btn:hover {
+            background-color: #45a049;
+        }
+        .edit-status {
+            margin-left: 10px;
+            color: #4CAF50;
+            font-style: italic;
+        }
         .stats {
             position: fixed;
             top: 10px;
@@ -492,7 +558,9 @@ html_template = """
             
             <h3>Your Analysis</h3>
             <div id="transcription" class="transcription">
-                Press "Start Recording" and analyze the position...
+                <textarea id="transcription-text" placeholder="Press 'Start Recording' and analyze the position..."></textarea>
+                <button class="save-edit-btn" onclick="saveEdit()" style="display:none;">Save Edit</button>
+                <span id="edit-status" class="edit-status" style="display:none;"></span>
             </div>
             
             <h3>PGN (for Lichess import)</h3>
@@ -508,11 +576,20 @@ html_template = """
         let audioChunks = [];
         let isRecording = false;
         let currentPGN = '';
+        let currentEntryId = null;
         
         // Initialize
         window.onload = function() {
             nextPosition();
             updateStats();
+            
+            // Add change listener to textarea
+            document.getElementById('transcription-text').addEventListener('input', function() {
+                if (currentEntryId) {
+                    document.querySelector('.save-edit-btn').style.display = 'inline-block';
+                    document.getElementById('edit-status').style.display = 'none';
+                }
+            });
         };
         
         async function nextPosition() {
@@ -539,7 +616,10 @@ html_template = """
             document.getElementById('pgn-text').textContent = data.pgn;
             
             // Clear previous transcription
-            document.getElementById('transcription').textContent = 'Press "Start Recording" and analyze the position...';
+            document.getElementById('transcription-text').value = '';
+            document.querySelector('.save-edit-btn').style.display = 'none';
+            document.getElementById('edit-status').style.display = 'none';
+            currentEntryId = null;
         }
         
         function copyPGN() {
@@ -610,7 +690,7 @@ html_template = """
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
             
-            document.getElementById('transcription').textContent = 'Transcribing...';
+            document.getElementById('transcription-text').value = 'Transcribing...';
             
             try {
                 const response = await fetch('/api/save_recording', {
@@ -620,16 +700,53 @@ html_template = """
                 
                 const data = await response.json();
                 if (data.success) {
-                    document.getElementById('transcription').innerHTML = `
-                        <strong>Your analysis:</strong><br>
-                        ${data.transcription}
-                    `;
+                    document.getElementById('transcription-text').value = data.transcription;
+                    currentEntryId = data.entry_id;
                     updateStats();
                 } else {
-                    document.getElementById('transcription').textContent = 'Error: ' + data.error;
+                    document.getElementById('transcription-text').value = 'Error: ' + data.error;
                 }
             } catch (error) {
-                document.getElementById('transcription').textContent = 'Error uploading recording';
+                document.getElementById('transcription-text').value = 'Error uploading recording';
+                console.error(error);
+            }
+        }
+        
+        async function saveEdit() {
+            if (!currentEntryId) {
+                alert('No entry to edit');
+                return;
+            }
+            
+            const newAnalysis = document.getElementById('transcription-text').value;
+            
+            try {
+                const response = await fetch('/api/update_analysis', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        entry_id: currentEntryId,
+                        analysis: newAnalysis
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    document.querySelector('.save-edit-btn').style.display = 'none';
+                    document.getElementById('edit-status').style.display = 'inline';
+                    document.getElementById('edit-status').textContent = '✓ Saved';
+                    
+                    // Hide the status after 2 seconds
+                    setTimeout(() => {
+                        document.getElementById('edit-status').style.display = 'none';
+                    }, 2000);
+                } else {
+                    alert('Error saving edit: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error saving edit');
                 console.error(error);
             }
         }
@@ -647,7 +764,7 @@ html_template = """
 
 # Create templates directory and save the HTML
 os.makedirs("templates", exist_ok=True)
-with open("templates/index.html", "w") as f:
+with open("templates/index.html", "w", encoding="utf-8") as f:
     f.write(html_template)
 
 if __name__ == "__main__":
