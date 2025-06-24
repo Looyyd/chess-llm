@@ -12,7 +12,6 @@ from datasets import load_dataset
 from utils.dataset_utils import select_weighted_position, reconstruct_board_position
 from utils.chess_utils import board_to_grid
 import logging
-import whisper
 import tempfile
 import numpy as np
 from datetime import datetime
@@ -45,14 +44,13 @@ current_position_data = None
 dataset = None
 dataset_iter = None
 engine = None
-whisper_model = None
 last_entry_id = None
 openai_client = None
 
 
 def init_resources():
-    """Initialize Stockfish, Whisper, and OpenAI"""
-    global engine, whisper_model, dataset, dataset_iter, openai_client
+    """Initialize Stockfish and OpenAI"""
+    global engine, dataset, dataset_iter, openai_client
 
     try:
         # Initialize Stockfish
@@ -62,14 +60,6 @@ def init_resources():
         logger.error(f"Failed to initialize Stockfish: {e}")
         raise
 
-    # Initialize Whisper
-    try:
-        whisper_model = whisper.load_model("base")
-        logger.info("Whisper model loaded successfully")
-    except Exception as e:
-        logger.error(f"Failed to load Whisper model: {e}")
-        raise
-
     # Initialize OpenAI
     if OPENAI_API_KEY:
         try:
@@ -77,11 +67,12 @@ def init_resources():
             logger.info("OpenAI client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
-            logger.warning("GPT-4o formatting will not be available")
+            raise
     else:
-        logger.warning(
-            "OPENAI_API_KEY not set. GPT-4o formatting will not be available"
+        logger.error(
+            "OPENAI_API_KEY not set. OpenAI transcription and formatting will not be available"
         )
+        raise ValueError("OPENAI_API_KEY is required")
 
     # Load chess dataset
     logger.info("Loading chess dataset...")
@@ -317,27 +308,72 @@ def save_recording():
     try:
         # Get the audio file from the request
         audio_file = request.files["audio"]
+        logger.info(
+            f"Received audio file: {audio_file.filename}, size: {audio_file.content_length}"
+        )
 
         # Save audio to temporary file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         temp_path = os.path.join(AUDIO_DIR, f"recording_{timestamp}.webm")
         audio_file.save(temp_path)
+        logger.info(f"Saved audio to: {temp_path}")
 
-        # Convert to WAV for Whisper (using soundfile)
+        # Convert to WAV for transcription
         wav_path = temp_path.replace(".webm", ".wav")
 
-        # You might need to use ffmpeg for webm to wav conversion
-        # For now, let's assume the audio is in a format soundfile can handle
+        # Use ffmpeg to convert webm to wav
         import subprocess
 
-        subprocess.run(
-            ["ffmpeg", "-i", temp_path, "-ar", "16000", "-ac", "1", wav_path],
-            check=True,
-        )
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-i", temp_path, "-ar", "16000", "-ac", "1", "-y", wav_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info(f"Converted to WAV: {wav_path}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg conversion failed: {e.stderr}")
+            return (
+                jsonify(
+                    {"success": False, "error": f"Audio conversion failed: {e.stderr}"}
+                ),
+                500,
+            )
 
-        # Transcribe with Whisper
-        result = whisper_model.transcribe(wav_path)
-        transcription = result["text"].strip()
+        # Check if WAV file exists and has content
+        if not os.path.exists(wav_path):
+            logger.error("WAV file was not created")
+            return jsonify({"success": False, "error": "WAV file creation failed"}), 500
+
+        wav_size = os.path.getsize(wav_path)
+        logger.info(f"WAV file size: {wav_size} bytes")
+
+        if wav_size == 0:
+            logger.error("WAV file is empty")
+            return (
+                jsonify({"success": False, "error": "Converted audio file is empty"}),
+                500,
+            )
+
+        # Transcribe with OpenAI GPT-4o mini
+        try:
+            with open(wav_path, "rb") as audio_file:
+                logger.info("Sending to OpenAI for transcription...")
+                transcript_response = openai_client.audio.transcriptions.create(
+                    model="gpt-4o-mini-transcribe",
+                    file=audio_file,
+                    language="en",  # Assuming English for chess analysis
+                    temperature=0.0,  # Lower temperature for more accurate transcription
+                )
+            transcription = transcript_response.text.strip()
+            logger.info(f"Transcription received: {transcription[:100]}...")
+        except Exception as e:
+            logger.error(f"Error with OpenAI transcription: {e}")
+            return (
+                jsonify({"success": False, "error": f"Transcription failed: {str(e)}"}),
+                500,
+            )
 
         # Format with GPT-4o if available
         formatted_result = format_chess_transcript(
@@ -345,6 +381,7 @@ def save_recording():
             current_position_data["board_fen"],
             current_position_data["turn"],
         )
+        print(f"Formatted result: {formatted_result}")
 
         # Save the dataset entry with all fields
         entry = {
@@ -791,12 +828,20 @@ html_template = """
                 audioChunks = [];
                 
                 mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
                 };
                 
                 mediaRecorder.onstop = async () => {
+                    console.log('Recording stopped, chunks:', audioChunks.length);
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    await uploadRecording(audioBlob);
+                    console.log('Created blob, size:', audioBlob.size);
+                    if (audioBlob.size > 0) {
+                        await uploadRecording(audioBlob);
+                    } else {
+                        alert('No audio data recorded. Please try again.');
+                    }
                 };
                 
                 mediaRecorder.start();
@@ -817,9 +862,11 @@ html_template = """
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
             
-            document.getElementById('transcription-text').value = 'Transcribing...';
-            document.getElementById('formatted-text').value = 'Formatting with GPT-4o...';
+            document.getElementById('transcription-text').value = 'Transcribing with GPT-4o mini...';
+            document.getElementById('formatted-text').value = 'Waiting for transcription...';
             document.getElementById('final-move').value = '';
+            
+            console.log('Uploading audio blob:', audioBlob.size, 'bytes');
             
             try {
                 const response = await fetch('/api/save_recording', {
@@ -828,6 +875,8 @@ html_template = """
                 });
                 
                 const data = await response.json();
+                console.log('Server response:', data);
+                
                 if (data.success) {
                     document.getElementById('transcription-text').value = data.transcription;
                     document.getElementById('formatted-text').value = data.formatted_transcript || data.transcription;
@@ -836,10 +885,11 @@ html_template = """
                     updateStats();
                 } else {
                     document.getElementById('transcription-text').value = 'Error: ' + data.error;
+                    console.error('Server error:', data.error);
                 }
             } catch (error) {
                 document.getElementById('transcription-text').value = 'Error uploading recording';
-                console.error(error);
+                console.error('Upload error:', error);
             }
         }
         
