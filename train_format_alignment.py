@@ -180,8 +180,8 @@ def main():
     parser.add_argument(
         "--eval-split-ratio",
         type=float,
-        default=0.05,
-        help="Ratio of data to use for evaluation (default: 0.05)",
+        default=0.08,
+        help="Ratio of data to use for evaluation (default: 0.08)",
     )
     parser.add_argument(
         "--eval-steps",
