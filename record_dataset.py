@@ -192,6 +192,8 @@ def get_next_position():
                     chess.svg.Arrow(move.from_square, move.to_square, color=colors[i])
                 )
 
+            # TODO: trying without arrows, because it biases the analysis and makes it less "human"
+            arrows=[]
             board_svg = chess.svg.board(board=board, arrows=arrows, size=600)
 
             # Create PGN for easy import to Lichess
