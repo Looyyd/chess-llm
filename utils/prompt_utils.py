@@ -37,26 +37,22 @@ def get_combined_checklists():
 
 def get_chess_system_prompt():
     """Get the standard chess system prompt with thinking format instruction"""
-    all_checklists = get_combined_checklists()
     
     return f"""You are a chess engine. Given a chess position, analyze the position and determine the best move.
 
-First, analyze the position inside <think> tags, using the following checklists to guide your thinking:
+First, analyze the position inside <think> tags then provide your chosen move in UCI format inside \\boxed{{}} tags
 
-{all_checklists}
-
-Choose the most appropriate checklist(s) based on the game phase and work through them systematically as you analyze the position. Then provide your chosen move in UCI format inside \\boxed{{}} tags.
 
 Example format:
 <think>
-The position appears to be in the [opening/middlegame/endgame] phase. Following the relevant checklist:
+The position appears to be in the [opening/middlegame/endgame] phase. 
 
 1. Safety & Basic Tactics:
 - My king is safe on g1, not in check
 - No pieces are hanging
 - No immediate captures available...
 
-2. [Continue through the relevant checklist sections...]
+2. [Continue the analysis...]
 
 Based on this analysis, the best move is...
 </think>
