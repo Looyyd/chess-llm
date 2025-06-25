@@ -307,7 +307,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,  # Add evaluation dataset
         processing_class=tokenizer,
-        callbacks=[progress_callback],  # Add our progress callback
+        # callbacks=[progress_callback],  # Add our progress callback
     )
 
     # Fine-tune the model
