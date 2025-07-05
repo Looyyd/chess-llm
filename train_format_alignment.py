@@ -60,7 +60,7 @@ def main():
     # Model configuration - using the model from the first SFT stage
     # Should be downloaded with
     # huggingface-cli download Looyyd/chess-sft-qwen --local-dir './chess_sft_qwen_hf/' --exclude "*00*optim_states.pt"
-    model_name = "./chess_sft_qwen_hf/checkpoint-5000/"  # Output from train_sft.py
+    model_name = "./chess_sft_qwen/checkpoint-2500/"  # Output from train_sft.py
 
     # Parse arguments
     import argparse
