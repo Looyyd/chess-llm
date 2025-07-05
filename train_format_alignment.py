@@ -178,7 +178,7 @@ def main():
         packing=False,
         # dataset_text_field="text",
         report_to="none" if DEBUG else "wandb",
-        push_to_hub=not DEBUG,
+        push_to_hub=False,
         hub_strategy="end",
         accelerator_config={
             "dispatch_batches": False,
