@@ -207,8 +207,9 @@ def main():
     train_dataset = dataset.map(
         lambda examples: preprocess_chess_games(examples, tokenizer),
         batched=True,
-        batch_size=100_000,
+        batch_size=1000,
         remove_columns=dataset.column_names,  # Remove original columns, keep only 'text'
+        keep_in_memory=True,
     )
 
     # Filter out empty texts (from games that were too short)
