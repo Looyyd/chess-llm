@@ -75,6 +75,7 @@ What is the best move? Analyze the position and provide your answer."""
 def format_chess_messages(system_prompt, user_prompt):
     """Format chess prompts as messages for chat template"""
     return [
-        {"role": "system", "content": system_prompt},
+        # Trying no system prompt to ensure always same position for board tokens
+        # {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]

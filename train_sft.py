@@ -154,7 +154,8 @@ What is the most likely next move? Answer with the final answer only, inside an 
 
         # Format as messages
         messages = [
-            {"role": "system", "content": system_prompt},
+            # Trying no system prompt to ensure always same position for board tokens
+            # {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
             {"role": "assistant", "content": assistant_response},
         ]
