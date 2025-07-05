@@ -92,7 +92,7 @@ def main():
     parser.add_argument(
         "--eval-steps",
         type=int,
-        default=20,
+        default=75,
         help="Run evaluation every N steps (default: 20)",
     )
     parser.add_argument(
@@ -159,7 +159,7 @@ def main():
         learning_rate=1e-2,  # Lower learning rate to preserve capabilities
         warmup_steps=50,
         logging_steps=10,
-        save_steps=args.eval_steps,
+        save_steps=args.eval_steps * 2,
         save_total_limit=2,
         save_strategy="steps",
         eval_strategy="steps",  # Enable evaluation
