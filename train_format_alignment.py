@@ -156,7 +156,7 @@ def main():
         gradient_accumulation_steps=1,
         num_train_epochs=1,  # Usually one epoch is enough for format alignment
         max_steps=args.max_steps,
-        learning_rate=1e-3,  # Lower learning rate to preserve capabilities
+        learning_rate=1e-2,  # Lower learning rate to preserve capabilities
         warmup_steps=50,
         logging_steps=10,
         save_steps=args.eval_steps,
