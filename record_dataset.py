@@ -378,18 +378,19 @@ def save_recording():
             )
 
         # Format with GPT-4o if available
-        formatted_result = format_chess_transcript(
-            transcription,
-            current_position_data["board_fen"],
-            current_position_data["turn"],
-        )
-        print(f"Formatted result: {formatted_result}")
+        # TODO: not needed anymore when using 4o mini
+        #formatted_result = format_chess_transcript(
+            #transcription,
+            #current_position_data["board_fen"],
+            #current_position_data["turn"],
+        #)
+        #print(f"Formatted result: {formatted_result}")
 
         # Save the dataset entry with all fields
         entry = {
             "analysis": transcription,  # Original whisper transcript
-            "transcript_formatted": formatted_result["reasoning_trace"],
-            "final_move": formatted_result["final_move"],
+            "transcript_formatted": transcription,
+            "final_move": "",
             "move_history": current_position_data["move_history"],
             "turn": current_position_data["turn"],
             "board_fen": current_position_data["board_fen"],
@@ -418,8 +419,8 @@ def save_recording():
             {
                 "success": True,
                 "transcription": transcription,
-                "formatted_transcript": formatted_result["reasoning_trace"],
-                "final_move": formatted_result["final_move"],
+                "formatted_transcript": transcription,
+                "final_move": "",
                 "entry_id": timestamp,
             }
         )
