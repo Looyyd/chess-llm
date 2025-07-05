@@ -63,11 +63,11 @@ def create_chess_user_prompt(board_grid, move_history_str, turn):
     """Create the standard user prompt for chess position analysis"""
     return f"""Current game position:
 
-Move history (UCI format): {move_history_str}
-Turn: {turn}
-
 Current board state:
 {board_grid}
+Turn: {turn}
+Move history (UCI format): {move_history_str}
+
 
 What is the best move? Analyze the position and provide your answer."""
 

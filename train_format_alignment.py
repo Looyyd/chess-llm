@@ -40,100 +40,6 @@ logger = logging.getLogger(__name__)
 DEBUG = False
 
 
-class SimpleProgressCallback(TrainerCallback):
-    """Simple callback that generates one response every 10 steps to show training progress"""
-
-    def __init__(self, tokenizer, chess_dataset, inference_steps=10):
-        self.tokenizer = tokenizer
-        self.chess_dataset = chess_dataset
-        self.inference_steps = inference_steps
-        self.system_prompt = get_chess_system_prompt()
-
-    def on_step_end(self, args, state, control, **kwargs):
-        # Run inference every `inference_steps` steps
-        if state.global_step % self.inference_steps == 0 and state.global_step > 0 and accelerator.is_main_process:
-            model = kwargs["model"]
-
-            logger.info(f"\n{'='*60}")
-            logger.info(f"PROGRESS CHECK - Step {state.global_step}")
-            logger.info(f"{'='*60}")
-
-            # Create a random chess position prompt
-            game_idx = random.randint(0, len(self.chess_dataset) - 1)
-            game = self.chess_dataset[game_idx]
-            moves = game["moves"]
-
-            # Skip if game is too short
-            if len(moves) < 8:
-                return
-
-            # Select weighted position
-            position_idx = select_weighted_position(moves)
-
-            # Reconstruct board position
-            board, move_history, move_history_str = reconstruct_board_position(
-                moves, position_idx
-            )
-
-            # Determine whose turn it is
-            turn = "White" if board.turn == chess.WHITE else "Black"
-
-            # Create board visualization
-            board_grid = board_to_grid(board)
-
-            # Create user prompt using shared utility
-            user_prompt = create_chess_user_prompt(board_grid, move_history_str, turn)
-
-            # Format as messages for chat template
-            messages = format_chess_messages(self.system_prompt, user_prompt)
-
-            # Apply chat template
-            prompt = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-
-            logger.info(f"Position: {turn} to move after {position_idx} moves")
-            logger.info(f"Board:\n{board_grid}")
-
-            # Generate response
-            model.eval()
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(model.device)
-
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=2048,
-                    temperature=0.7,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    return_dict_in_generate=True,
-                )
-
-            # Extract only the newly generated tokens (excluding the input prompt)
-            input_length = inputs["input_ids"].shape[1]
-            generated_tokens = outputs.sequences[0][input_length:]
-
-            # Decode only the newly generated part
-            assistant_response = self.tokenizer.decode(
-                generated_tokens, skip_special_tokens=True
-            )
-
-            logger.info(f"\nModel Response:")
-            logger.info("-" * 40)
-            logger.info(assistant_response)
-            logger.info("-" * 40)
-
-            # Quick format analysis
-            has_think = (
-                "<think>" in assistant_response and "</think>" in assistant_response
-            )
-            has_boxed = "\\boxed{" in assistant_response and "}" in assistant_response
-            logger.info(f"Format: Think={has_think}, Boxed={has_boxed}")
-
-            logger.info(f"{'='*60}\n")
-            model.train()
-
-
 def prepare_format_dataset(examples):
     """Prepare the format alignment dataset"""
     # The dataset should already be in the correct format with messages
@@ -152,7 +58,7 @@ def main():
     global tokenizer  # Make tokenizer global for the prepare function
 
     # Model configuration - using the model from the first SFT stage
-    # Should be downloaded with 
+    # Should be downloaded with
     # huggingface-cli download Looyyd/chess-sft-qwen --local-dir './chess_sft_qwen_hf/' --exclude "*00*optim_states.pt"
     model_name = "./chess_sft_qwen_hf/checkpoint-5000/"  # Output from train_sft.py
 
@@ -211,7 +117,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
-        use_cache=False, # prevents an error ?
+        use_cache=False,  # prevents an error ?
         attn_implementation="flash_attention_2",
     )
 
@@ -241,19 +147,6 @@ def main():
     if accelerator.is_main_process:
         logger.info(f"Train dataset size: {len(train_dataset)}")
         logger.info(f"Eval dataset size: {len(eval_dataset)}")
-
-    # Load chess dataset for callback (using same dataset as training for position generation)
-    chess_dataset = load_dataset(
-        "Looyyd/chess-dataset",
-        data_files={"train": "train.jsonl"},
-        split="train",
-        streaming=False,
-    )
-    if DEBUG:
-        chess_dataset = chess_dataset.take(100)
-
-    # Get system prompt from shared utility
-    system_prompt = get_chess_system_prompt()
 
     # Training arguments with evaluation
     training_args = SFTConfig(
@@ -295,11 +188,6 @@ def main():
         gradient_checkpointing=True,
     )
 
-    # Create our simple progress callback
-    progress_callback = SimpleProgressCallback(
-        tokenizer=tokenizer, chess_dataset=chess_dataset, inference_steps=10
-    )
-
     # Initialize trainer with evaluation dataset
     trainer = SFTTrainer(
         model=model,
@@ -307,7 +195,6 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,  # Add evaluation dataset
         processing_class=tokenizer,
-        # callbacks=[progress_callback],  # Add our progress callback
     )
 
     # Fine-tune the model

@@ -138,16 +138,15 @@ def preprocess_chess_games(examples, tokenizer, min_elo=1500, min_time_control=3
 
         user_prompt = f"""Current game position:
 
+Current board state:
+{board_grid}
+Turn: {turn}
+Move history (UCI format): {move_history_str}
+
 Player Elo: {current_elo}
 Time Control: {time_control}
 Opening: {opening}
 ECO: {eco if eco else "N/A"}
-Move history (UCI format): {move_history_str}
-Turn: {turn}
-
-Current board state:
-{board_grid}
-
 
 What is the most likely next move? Answer with the final answer only, inside an \\boxed{"{}"} box."""
 
@@ -214,8 +213,6 @@ def main():
     # Filter out empty texts (from games that were too short)
     train_dataset = train_dataset.filter(lambda example: len(example["text"]) > 0)
 
-    # eval_dataset = dataset.skip(1000).take(200).map(...)
-
     # Training arguments
     training_args = SFTConfig(
         output_dir="./chess_sft_qwen",
@@ -252,53 +249,6 @@ def main():
         use_liger_kernel=True,
     )
 
-    # Prepare the test prompt
-    test_position = """Current game position:
-
-Player Elo: 1800
-Time Control: 300+0
-Opening: Ruy Lopez: Morphy Defense, Caro Variation
-ECO: C70
-Move history (UCI format): e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8 h2h3 c6a5 b3c2 c7c5 d2d4 d8c7 b1d2 c5d4 c3d4 a5c6
-Turn: White
-
-Current board state:
-  a b c d e f g h
-  ----------------
-8| r . b . . r k . |8
-7| . . q . b p p p |7
-6| p . n p . n . . |6
-5| . p . . p . . . |5
-4| . . . P P . . . |4
-3| . . . . . N . P |3
-2| P P B N . P P . |2
-1| R . B Q R . K . |1
-  ----------------
-  a b c d e f g h
-
-
-What is the most likely next move? Answer with the final answer only, inside an \\boxed{} box."""
-
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a chess engine. Given a chess position, predict the most likely next move based on the player's Elo rating and game context.",
-        },
-        {"role": "user", "content": test_position},
-    ]
-
-    # Format with chat template
-    test_prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True, padding_side="left"
-    )
-
-    # Create the inference callback
-    inference_callback = PeriodicInferenceCallback(
-        tokenizer=tokenizer,
-        test_prompt=test_prompt,
-        inference_steps=200,  # Run inference every 200 steps
-    )
-
     # Initialize trainer with the callback
     trainer = SFTTrainer(
         model=model,
@@ -306,7 +256,6 @@ What is the most likely next move? Answer with the final answer only, inside an 
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,  # Uncomment if you have eval data
         processing_class=tokenizer,
-        callbacks=[inference_callback],  # Add the callback here
     )
 
     # Fine-tune the model
