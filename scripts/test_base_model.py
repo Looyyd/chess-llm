@@ -142,7 +142,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="./chess_format_aligned/checkpoint-120",
+        default="./chess_format_aligned/checkpoint-600",
         help="Model path or name (default: Qwen/Qwen2.5-7B-Instruct)",
     )
     parser.add_argument(
