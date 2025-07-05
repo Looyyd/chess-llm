@@ -156,7 +156,7 @@ def main():
         gradient_accumulation_steps=1,
         num_train_epochs=1,  # Usually one epoch is enough for format alignment
         max_steps=args.max_steps,
-        learning_rate=1e-6,  # Lower learning rate to preserve capabilities
+        learning_rate=1e-3,  # Lower learning rate to preserve capabilities
         warmup_steps=50,
         logging_steps=10,
         save_steps=args.eval_steps,
@@ -169,7 +169,7 @@ def main():
         load_best_model_at_end=True,  # Load best model when training ends
         bf16=True,
         optim="adamw_torch",
-        max_grad_norm=1.0,
+        max_grad_norm=1e-8,
         ddp_find_unused_parameters=False,
         # Completion only, to train on what we really care about
         completion_only_loss=True,
