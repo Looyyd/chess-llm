@@ -206,8 +206,8 @@ def main():
     # Map preprocessing function with batching for efficiency
     train_dataset = dataset.map(
         lambda examples: preprocess_chess_games(examples, tokenizer),
-        # batched=True,
-        # batch_size=1000,
+        batched=True,
+        batch_size=100_000,
         remove_columns=dataset.column_names,  # Remove original columns, keep only 'text'
     )
 
