@@ -112,11 +112,13 @@ def test_base_model_inference(model_path="Qwen/Qwen2.5-7B-Instruct", num_samples
             )
 
         # Extract only the newly generated tokens (excluding the input prompt)
-        input_length = inputs['input_ids'].shape[1]
+        input_length = inputs["input_ids"].shape[1]
         generated_tokens = outputs.sequences[0][input_length:]
-        
+
         # Decode only the newly generated part
-        assistant_response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        assistant_response = tokenizer.decode(
+            generated_tokens, skip_special_tokens=True
+        )
 
         print("\nMODEL RESPONSE:")
         print("-" * 40)
@@ -140,7 +142,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="Qwen/Qwen2.5-7B-Instruct",
+        default="./chess_format_aligned/checkpoint-120",
         help="Model path or name (default: Qwen/Qwen2.5-7B-Instruct)",
     )
     parser.add_argument(
