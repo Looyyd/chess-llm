@@ -187,7 +187,7 @@ def main():
 
     # Load dataset from Hugging Face
     logger.info("Loading dataset from Hugging Face...")
-    take_count = 1000 if DEBUG else None
+    take_count = 1000 if DEBUG else 100_000
 
     # Load from Hugging Face Hub
     dataset = load_dataset(
