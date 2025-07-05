@@ -194,7 +194,7 @@ def main():
         "Looyyd/chess-dataset",
         data_files={"train": "train.jsonl"},
         split="train",
-        streaming=True,
+        # streaming=True,
     )
 
     if take_count is not None:
