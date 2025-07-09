@@ -252,6 +252,7 @@ def main():
             "dispatch_batches": False,
         },
         use_liger_kernel=True,
+        gradient_checkpointing=True,
     )
 
     # Initialize trainer with the callback
