@@ -224,7 +224,10 @@ def main():
         gradient_accumulation_steps=1,
         num_train_epochs=3,
         max_steps=1000 if DEBUG else 100_000,
-        learning_rate=2e-5,
+        # learning_rate=2e-5,
+        learning_rate=1e-2,  # Lower learning rate to preserve capabilities
+        # max_grad_norm=1.0,
+        max_grad_norm=1e-8,  # Lower grad norm to preserve capabilities
         warmup_steps=100,
         logging_steps=100,
         padding_free=True,  # this works with flash attention 2 and avoids padding errors, TODO: can now remove padding_left?
@@ -235,7 +238,6 @@ def main():
         eval_strategy="no",
         bf16=True,
         optim="adamw_torch",
-        max_grad_norm=1.0,
         ddp_find_unused_parameters=False,
         # SFT specific parameters
         max_length=1024,
