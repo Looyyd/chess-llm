@@ -216,7 +216,7 @@ def main():
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
     tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"  # Required for GRPO
+    tokenizer.padding_side = "right"  # Required for GRPO
 
     # Load dataset from Hugging Face
     logger.info("Loading dataset from Hugging Face...")
