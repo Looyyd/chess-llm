@@ -172,8 +172,8 @@ def main():
     model_name = "Qwen/Qwen2.5-7B-Instruct"
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_size="left")
-    tokenizer.padding_side = "left"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_size="right")
+    tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
 
     # Load model with quantization
@@ -230,7 +230,7 @@ def main():
         max_grad_norm=1e-8,  # Lower grad norm to preserve capabilities
         warmup_steps=100,
         logging_steps=100,
-        padding_free=True,  # this works with flash attention 2 and avoids padding errors, TODO: can now remove padding_left?
+        # padding_free=True,  # this works with flash attention 2 and avoids padding errors, TODO: can now remove padding_left?
         # Disable local saving
         save_steps=500,
         save_total_limit=1,

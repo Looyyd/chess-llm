@@ -111,7 +111,9 @@ def main():
     args = parser.parse_args()
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_size="right")
+    tokenizer.padding_side = "right"
+    tokenizer.pad_token = tokenizer.eos_token
 
     # Load model
     device_string = PartialState().process_index
