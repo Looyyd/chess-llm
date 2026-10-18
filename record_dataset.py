@@ -80,7 +80,7 @@ def init_resources():
         "Looyyd/chess-dataset",
         data_files={"train": "train.jsonl"},
         split="train",
-        streaming=True,  # Use streaming for efficiency
+        streaming=False,  # Use streaming for efficiency
     )
     dataset_iter = iter(dataset)
 
